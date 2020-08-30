@@ -120,6 +120,7 @@ pub mod decimal;
 pub mod int;
 pub mod reader;
 pub mod result;
+pub mod stream;
 pub mod string;
 pub mod timestamp;
 pub mod writer;
