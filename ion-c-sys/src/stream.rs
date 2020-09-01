@@ -15,6 +15,7 @@ pub struct IonCStreamHandler<F: FnMut(&mut _ion_user_stream) -> IonCResult<()>> 
 }
 
 impl<F: FnMut(&mut _ion_user_stream) -> IonCResult<()>> IonCStreamHandler<F> {
+    /// Wraps the given closure into an FFI safe structure.
     pub fn new(handler: F) -> Self {
         Self { handler }
     }
