@@ -32,6 +32,13 @@ pub enum IonError {
         "The user has performed an operation that is not legal in the current state: {operation}"
     )]
     IllegalOperation { operation: String },
+
+    /// Indicates that the underlying failure is due to a problem in [`ion_c_sys`].
+    #[error("{source:?}")]
+    IonCError {
+        #[from]
+        source: ion_c_sys::result::IonCError,
+    },
 }
 
 // io::Error does not implement Clone, which precludes us from simply deriving an implementation.
@@ -55,6 +62,9 @@ impl Clone for IonError {
             IllegalOperation { operation } => IllegalOperation {
                 operation: operation.clone(),
             },
+            IonCError { source } => IonCError {
+                source: source.clone(),
+            },
         }
     }
 }
@@ -71,6 +81,7 @@ impl PartialEq for IonError {
             (FmtError { source: s1 }, FmtError { source: s2 }) => s1 == s2,
             (DecodingError { description: s1 }, DecodingError { description: s2 }) => s1 == s2,
             (IllegalOperation { operation: s1 }, IllegalOperation { operation: s2 }) => s1 == s2,
+            (IonCError { source: s1 }, IonCError { source: s2 }) => s1 == s2,
             _ => false,
         }
     }
