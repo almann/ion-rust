@@ -1,6 +1,7 @@
 use crate::result::{illegal_operation_raw, IonResult};
 use crate::types::decimal::Decimal;
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Timelike};
+use ion_c_sys::timestamp::{IonDateTime, TSOffsetKind, TSPrecision};
 use std::fmt::Debug;
 
 /// Indicates the most precise time unit that has been specified in the accompanying [Timestamp].
@@ -584,6 +585,40 @@ impl From<DateTime<FixedOffset>> for Timestamp {
         let offset = Some(*fixed_offset_date_time.offset());
         let precision = Precision::FractionalSeconds;
         let fractional_seconds = Some(Mantissa::Digits(9));
+        Timestamp {
+            date_time,
+            offset,
+            precision,
+            fractional_seconds,
+        }
+    }
+}
+
+impl From<ion_c_sys::timestamp::IonDateTime> for Timestamp {
+    fn from(ionc_dt: IonDateTime) -> Self {
+        use ion_c_sys::timestamp::Mantissa as IonCMantissa;
+
+        let offset = match ionc_dt.offset_kind() {
+            TSOffsetKind::KnownOffset => Some(ionc_dt.as_datetime().offset().clone()),
+            TSOffsetKind::UnknownOffset => None,
+        };
+        let precision = match ionc_dt.precision() {
+            TSPrecision::Year => Precision::Year,
+            TSPrecision::Month => Precision::Month,
+            TSPrecision::Day => Precision::Day,
+            TSPrecision::Minute => Precision::HourAndMinute,
+            TSPrecision::Second => Precision::Second,
+            TSPrecision::Fractional(_) => Precision::FractionalSeconds,
+        };
+        let fractional_seconds = if let TSPrecision::Fractional(mantissa) = ionc_dt.precision() {
+            Some(match mantissa {
+                IonCMantissa::Digits(digits) => Mantissa::Digits(*digits),
+                IonCMantissa::Fraction(fraction) => Mantissa::Arbitrary(fraction.clone().into()),
+            })
+        } else {
+            None
+        };
+        let date_time = ionc_dt.into_datetime().naive_utc();
         Timestamp {
             date_time,
             offset,
