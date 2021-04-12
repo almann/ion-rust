@@ -14,7 +14,7 @@ use std::convert::{TryFrom, TryInto};
 /// Loads Ion data into [`Element`] instances.
 ///
 /// Users of this trait should not assume any particular implementation of `Element`.
-/// In the future, generic associated types (GAT)][gat] and [existential types in traits][et]
+/// In the future, [generic associated types (GAT)][gat] and [existential types in traits][et]
 /// should make it easier to model this more abstractly.
 ///
 /// [gat]: https://rust-lang.github.io/rfcs/1598-generic_associated_types.html
