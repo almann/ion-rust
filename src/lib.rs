@@ -13,6 +13,7 @@ pub mod constants;
 mod reader;
 mod symbol_table;
 mod system_event_handler;
+mod tiny;
 
 pub use binary::cursor::BinaryIonCursor;
 pub use cursor::Cursor;
