@@ -29,21 +29,21 @@ pub trait IntegerReader {
 }
 
 #[derive(Debug)]
-pub enum Event<'ctx, I>
+pub enum Event<I>
 where
-    I: IntegerReader + Debug + ?Sized,
+    I: IntegerReader + Debug,
 {
     EndOfStream,
     Null(TinyType),
     /// GAT would make this just `I` because we could construct
     /// a value with the borrow tied to `'ctx`.
-    Integer(&'ctx mut I),
+    Integer(I),
 }
 
 pub trait Cursor {
-    type IReader: IntegerReader + Debug + ?Sized;
+    type IReader<'val>: IntegerReader + Debug;
 
-    fn next(&mut self) -> TinyResult<Event<Self::IReader>>;
+    fn next<'a>(&'a mut self) -> TinyResult<Event<Self::IReader<'a>>>;
 }
 
 struct ByteScanner<'data> {
@@ -74,32 +74,22 @@ impl<'data> ByteScanner<'data> {
     }
 }
 
-/// Storage for the reader implementations--with GAT, we don't need this
-/// because we can return an associated type with a lifetime parameter that is
-/// not bound to the trait's lifetime.
-enum BReader<'data> {
-    None,
-    Integer(BIntegerReader<'data>),
-}
-
 pub struct BCursor<'data> {
     scanner: ByteScanner<'data>,
-    reader: BReader<'data>,
 }
 
 impl<'data> BCursor<'data> {
     pub fn new(data: &'data [u8]) -> Self {
         Self {
             scanner: ByteScanner::new(data),
-            reader: BReader::None,
         }
     }
 }
 
 impl<'data> Cursor for BCursor<'data> {
-    type IReader = BIntegerReader<'data>;
+    type IReader<'ctx> = BIntegerReader<'data, 'ctx>;
 
-    fn next(&mut self) -> TinyResult<Event<Self::IReader>> {
+    fn next<'ctx>(&'ctx mut self) -> TinyResult<Event<Self::IReader<'ctx>>> {
         Ok(if self.scanner.rem() == 0 {
             Event::EndOfStream
         } else {
@@ -109,17 +99,7 @@ impl<'data> Cursor for BCursor<'data> {
                 // null int
                 0x01 => Event::Null(TinyType::Integer),
                 // integer value
-                0x10 => {
-                    // this here is emulating a value that borrows from the cursor in a
-                    // mutable way, with GAT we would just construct that, but we can't
-                    // refer to the associated Self::Reader generically to bind the lifetime
-                    // here.
-                    self.reader = BReader::Integer(BIntegerReader { cursor: self });
-                    match &mut self.reader {
-                        BReader::Integer(ireader) => Event::Integer(ireader),
-                        _ => panic!("Unexpected reader variant!"),
-                    }
-                }
+                0x10 => Event::Integer(BIntegerReader { cursor: self }),
                 type_code => return parse_error(format!("Invalid type: {:x}", type_code)),
             }
         })
@@ -127,7 +107,7 @@ impl<'data> Cursor for BCursor<'data> {
 }
 
 #[derive(Debug)]
-pub struct BIntegerReader<'data> {
+pub struct BIntegerReader<'data, 'ctx> {
     /// We model the borrow as a raw pointer because we cannot model the lifetime into the
     /// cursor.  However, the only way this reader is returned is by a mutable borrow from the
     /// cursor itself, so even though we have to model this unsafe, it will never be used
@@ -135,45 +115,34 @@ pub struct BIntegerReader<'data> {
     ///
     /// When GAT lands, we can model this with a lifetime parameter return it in the `Event`
     /// directly rather than by mutable borrow.
-    cursor: *mut BCursor<'data>,
+    cursor: &'ctx mut BCursor<'data>,
 }
 
-impl<'data> IntegerReader for BIntegerReader<'data> {
+impl<'data, 'ctx> IntegerReader for BIntegerReader<'data, 'ctx> {
     fn read_i64(&mut self) -> TinyResult<i64> {
-        // the invariant here is that a caller only ever gets an mutable borrow of reader from
-        // a cursor, therefore this must succeed and a panic is warranted if not.
-        let cursor = unsafe { self.cursor.as_mut().unwrap() };
-
         // for our dumb format just widen a byte to an i64
-        Ok(cursor.scanner.read()? as i64)
+        Ok(self.cursor.scanner.read()? as i64)
     }
-}
-
-pub enum TReader<'data> {
-    None,
-    Integer(TIntegerReader<'data>),
 }
 
 // text implementation--forgive the copy-paste, we'd factor this better in a real implementation
 
 pub struct TCursor<'data> {
     scanner: ByteScanner<'data>,
-    reader: TReader<'data>,
 }
 
 impl<'data> TCursor<'data> {
     pub fn new(data: &'data [u8]) -> Self {
         Self {
             scanner: ByteScanner::new(data),
-            reader: TReader::None,
         }
     }
 }
 
 impl<'data> Cursor for TCursor<'data> {
-    type IReader = TIntegerReader<'data>;
+    type IReader<'ctx> = TIntegerReader<'data, 'ctx>;
 
-    fn next(&mut self) -> TinyResult<Event<Self::IReader>> {
+    fn next<'ctx>(&'ctx mut self) -> TinyResult<Event<Self::IReader<'ctx>>> {
         Ok(if self.scanner.rem() == 0 {
             Event::EndOfStream
         } else {
@@ -185,13 +154,7 @@ impl<'data> Cursor for TCursor<'data> {
                     // null int
                     "Z" => Event::Null(TinyType::Integer),
                     // integer value
-                    "I" => {
-                        self.reader = TReader::Integer(TIntegerReader { cursor: self });
-                        match &mut self.reader {
-                            TReader::Integer(ireader) => Event::Integer(ireader),
-                            _ => panic!("Unexpected reader variant!"),
-                        }
-                    }
+                    "I" => Event::Integer(TIntegerReader { cursor: self }),
                     type_code => return parse_error(format!("Invalid type: {}", type_code)),
                 }
             } else {
@@ -202,16 +165,14 @@ impl<'data> Cursor for TCursor<'data> {
 }
 
 #[derive(Debug)]
-pub struct TIntegerReader<'data> {
-    cursor: *mut TCursor<'data>,
+pub struct TIntegerReader<'data, 'ctx> {
+    cursor: &'ctx mut TCursor<'data>,
 }
 
-impl<'data> IntegerReader for TIntegerReader<'data> {
+impl<'data, 'ctx> IntegerReader for TIntegerReader<'data, 'ctx> {
     fn read_i64(&mut self) -> TinyResult<i64> {
-        let cursor = unsafe { self.cursor.as_mut().unwrap() };
-
         // for our dumb format, a single ascii 0-9 number character is parsed
-        let octet = cursor.scanner.read()?;
+        let octet = self.cursor.scanner.read()?;
         let value: i64 = if let Ok(text) = from_utf8(&[octet]) {
             if let Ok(val) = text.parse() {
                 val
