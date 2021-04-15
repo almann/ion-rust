@@ -2,6 +2,7 @@
 
 use crate::result::IonResult;
 use crate::value::owned::{OwnedElement, OwnedSymbolToken, OwnedValue};
+use crate::value::AnyInt;
 use crate::IonType;
 use ion_c_sys::reader::{IonCReader, IonCReaderHandle};
 use ion_c_sys::ION_TYPE;
@@ -70,15 +71,16 @@ impl<'a> IonCReaderIterator<'a> {
                 IonType::Null => Null(ion_type),
                 IonType::Boolean => Boolean(self.reader.read_bool()?),
                 IonType::Integer => {
-                    todo!()
+                    Integer(AnyInt::I64(self.reader.read_i64()?));
+                    todo!("BigInt")
                 }
                 IonType::Float => Float(self.reader.read_f64()?),
                 IonType::Decimal => Decimal(self.reader.read_bigdecimal()?.into()),
                 IonType::Timestamp => Timestamp(self.reader.read_datetime()?.into()),
                 IonType::Symbol => todo!(),
-                IonType::String => todo!(),
+                IonType::String => String(self.reader.read_string()?.as_str().into()),
                 IonType::Clob => todo!(),
-                IonType::Blob => todo!(),
+                IonType::Blob => Blob(self.reader.read_bytes()?),
                 IonType::List => todo!(),
                 IonType::SExpression => todo!(),
                 IonType::Struct => todo!(),
