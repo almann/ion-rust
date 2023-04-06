@@ -31,16 +31,20 @@ pub mod reader;
 mod sequence;
 mod sexp;
 mod r#struct;
+mod views;
 pub mod writer;
 
 // Re-export the Value variant types and traits so they can be accessed directly from this module.
 pub use self::bytes::Bytes;
 pub use lob::{Blob, Clob};
 
+use crate::result::illegal_operation;
 pub use list::List;
 pub use r#struct::Struct;
 pub use sequence::Sequence;
 pub use sexp::SExp;
+// TODO fully export the view APIs
+pub use views::{ClobElement, View};
 
 impl IonEq for Value {
     fn ion_eq(&self, other: &Self) -> bool {
@@ -467,6 +471,15 @@ impl Element {
         }
     }
 
+    /// Narrows this [`Element`] into a [`ClobView`] if possible.
+    pub fn try_into_clob_view(self) -> IonResult<ClobElement> {
+        let ion_type = self.ion_type();
+        match self.value {
+            Value::Clob(bytes) => Ok(views::ClobElement::new(self.annotations, bytes)),
+            _ => illegal_operation(format!("Cannot convert {} Element to a ClobView", ion_type)),
+        }
+    }
+
     /// Reads a single Ion [`Element`] from the provided data source.
     ///
     /// If the data source is empty, returns `Ok(None)`.
@@ -534,6 +547,13 @@ where
 {
     fn from(value: T) -> Self {
         Element::new(Vec::new(), value.into())
+    }
+}
+
+impl From<ClobElement> for Element {
+    fn from(value: ClobElement) -> Self {
+        let (annotations, bytes) = value.into_components();
+        Self::new(annotations, Value::Clob(bytes))
     }
 }
 
