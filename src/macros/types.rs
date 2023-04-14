@@ -115,13 +115,13 @@ impl Display for ParamType {
     }
 }
 
-/// Return and parameters of a macro.
-pub struct SigType {
+/// Type representation of a macro shape.
+pub struct ArrowType {
     result: Box<StaticType>,
     parameters: Vec<ParamType>,
 }
 
-impl Display for SigType {
+impl Display for ArrowType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         todo!()
     }
@@ -135,7 +135,7 @@ pub enum StaticType {
     Untagged(IonType),
     Fixed(FixedType),
     // TODO make this is parameterized
-    Shape,
+    Shape(Box<ArrowType>),
 }
 
 impl Display for StaticType {
