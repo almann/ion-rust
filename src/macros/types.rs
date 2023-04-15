@@ -106,7 +106,10 @@ impl Display for Cardinality {
     }
 }
 
+// TODO support macro -> type cardinality parameters
+
 /// Pair of type and cardinality
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct ParamType(pub Box<StaticType>, pub Cardinality);
 
 impl Display for ParamType {
@@ -116,12 +119,13 @@ impl Display for ParamType {
 }
 
 /// Type representation of a macro shape.
-pub struct ArrowType {
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct MacroType {
     result: Box<StaticType>,
     parameters: Vec<ParamType>,
 }
 
-impl Display for ArrowType {
+impl Display for MacroType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         todo!()
     }
@@ -135,7 +139,7 @@ pub enum StaticType {
     Untagged(IonType),
     Fixed(FixedType),
     // TODO make this is parameterized
-    Shape(Box<ArrowType>),
+    Macro(Box<MacroType>),
 }
 
 impl Display for StaticType {
