@@ -106,7 +106,7 @@ impl Display for Cardinality {
     }
 }
 
-// TODO support macro -> type cardinality parameters
+// TODO expand support arrow `->` parameters
 
 /// Pair of type and cardinality
 #[derive(Debug, Eq, PartialEq, Clone)]
