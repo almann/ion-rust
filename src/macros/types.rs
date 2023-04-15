@@ -138,12 +138,17 @@ pub enum StaticType {
     Tagged(IonType),
     Untagged(IonType),
     Fixed(FixedType),
-    // TODO make this is parameterized
     Macro(Box<MacroType>),
 }
 
 impl Display for StaticType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        match self {
+            StaticType::Union(t) => write!(f, "{}", t),
+            StaticType::Tagged(t) => write!(f, "{}", t),
+            StaticType::Untagged(t) => write!(f, "{}", t),
+            StaticType::Fixed(t) => write!(f, "{}", t),
+            StaticType::Macro(t) => write!(f, "{}", t),
+        }
     }
 }
