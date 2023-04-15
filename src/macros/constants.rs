@@ -4,8 +4,8 @@
 //!
 //! Primarily centered around keywords and type names.
 
-/// Constants for type names and other elements (e.g. cardinality and arrow).
-pub(crate) mod types {
+/// Constants for syntactic elements such as keywords, sigil tokens, and built-in types.
+pub(crate) mod syntax {
     pub const UINT8: &str = "uint8";
     pub const UINT16: &str = "uint16";
     pub const UINT32: &str = "uint32";
@@ -26,4 +26,10 @@ pub(crate) mod types {
     pub const TEXT: &str = "text";
     pub const LOB: &str = "lob";
     pub const SEQUENCE: &str = "sequence";
+
+    pub const EXACTLY_ONE_SIGIL: &str = "!";
+    pub const ZERO_OR_ONE_SIGIL: &str = "?";
+    pub const ZERO_OR_MORE_SIGIL: &str = "*";
+    pub const ONE_OR_MORE_SIGIL: &str = "+";
+    pub const REST_SIGIL: &str = "...";
 }

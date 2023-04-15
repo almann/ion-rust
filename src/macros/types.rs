@@ -4,8 +4,8 @@
 //!
 //! This goes above the runtime type system of Ion within the macro system.
 
-use crate::macros::constants::types::*;
-use crate::{IonError, IonType};
+use crate::macros::constants::syntax::*;
+use crate::IonType;
 use std::fmt::{Display, Formatter};
 
 /// Macro types that are encoded without and fixed width.
@@ -97,11 +97,11 @@ impl Display for Cardinality {
             f,
             "{}",
             match self {
-                Cardinality::ExactlyOne => "!",
-                Cardinality::ZeroOrOne => "?",
-                Cardinality::ZeroOrMore => "*",
-                Cardinality::OneOrMore => "+",
-                Cardinality::Rest => "...",
+                Cardinality::ExactlyOne => EXACTLY_ONE_SIGIL,
+                Cardinality::ZeroOrOne => ZERO_OR_ONE_SIGIL,
+                Cardinality::ZeroOrMore => ZERO_OR_MORE_SIGIL,
+                Cardinality::OneOrMore => ONE_OR_MORE_SIGIL,
+                Cardinality::Rest => ZERO_OR_MORE_SIGIL,
             }
         )
     }
