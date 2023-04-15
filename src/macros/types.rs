@@ -4,7 +4,8 @@
 //!
 //! This goes above the runtime type system of Ion within the macro system.
 
-use crate::IonType;
+use crate::macros::constants::types::*;
+use crate::{IonError, IonType};
 use std::fmt::{Display, Formatter};
 
 /// Macro types that are encoded without and fixed width.
@@ -30,17 +31,17 @@ impl Display for FixedType {
             f,
             "{}",
             match self {
-                FixedType::UInt8 => "uint8",
-                FixedType::UInt16 => "uint16",
-                FixedType::UInt32 => "uint32",
-                FixedType::UInt64 => "uint64",
-                FixedType::Int8 => "int8",
-                FixedType::Int16 => "int16",
-                FixedType::Int32 => "int32",
-                FixedType::Int64 => "int64",
-                FixedType::Float16 => "float16",
-                FixedType::Float32 => "float32",
-                FixedType::Float64 => "float64",
+                FixedType::UInt8 => UINT8,
+                FixedType::UInt16 => UINT16,
+                FixedType::UInt32 => UINT32,
+                FixedType::UInt64 => UINT64,
+                FixedType::Int8 => INT8,
+                FixedType::Int16 => INT16,
+                FixedType::Int32 => INT32,
+                FixedType::Int64 => INT64,
+                FixedType::Float16 => FLOAT16,
+                FixedType::Float32 => FLOAT32,
+                FixedType::Float64 => FLOAT64,
             }
         )
     }
@@ -69,12 +70,12 @@ impl Display for UnionType {
             f,
             "{}",
             match self {
-                UnionType::Any => "any",
-                UnionType::Number => "number",
-                UnionType::Exact => "exact",
-                UnionType::Text => "text",
-                UnionType::Lob => "lob",
-                UnionType::Sequence => "sequence",
+                UnionType::Any => ANY,
+                UnionType::Number => NUMBER,
+                UnionType::Exact => EXACT,
+                UnionType::Text => TEXT,
+                UnionType::Lob => LOB,
+                UnionType::Sequence => SEQUENCE,
             }
         )
     }
