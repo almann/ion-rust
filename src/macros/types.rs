@@ -122,42 +122,96 @@ impl Display for ParamType {
 /// Type representation of a macro shape.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct MacroType {
-    result: Box<StaticType>,
-    parameters: Vec<ParamType>,
+    ret_type: ValueType,
+    param_types: Vec<ParamType>,
+}
+
+impl MacroType {
+    pub fn new<P>(ret_type: ValueType, param_types: P) -> Self
+    where
+        P: IntoIterator<Item = ParamType>,
+    {
+        Self {
+            ret_type,
+            param_types: param_types.into_iter().collect(),
+        }
+    }
+}
+
+impl<P> From<(ValueType, P)> for MacroType
+where
+    P: IntoIterator<Item = ParamType>,
+{
+    fn from(value: (ValueType, P)) -> Self {
+        let (ret_type, param_types) = value;
+        Self::new(ret_type, param_types)
+    }
 }
 
 impl Display for MacroType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "(")?;
-        for (i, param) in self.parameters.iter().enumerate() {
+        for (i, param) in self.param_types.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
             }
             write!(f, "{}", param)?;
         }
         write!(f, ")")?;
-        write!(f, " => {}", self.result)
+        write!(f, " => {}", self.ret_type)
+    }
+}
+
+/// Basic value types.
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum ValueType {
+    Union(UnionType),
+    Tagged(IonType),
+    Untagged(IonType),
+    Fixed(FixedType),
+}
+
+impl Display for ValueType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ValueType::Union(t) => write!(f, "{}", t),
+            ValueType::Tagged(t) => write!(f, "{}", t),
+            ValueType::Untagged(t) => write!(f, "{} {}", UNTAGGED, t),
+            ValueType::Fixed(t) => write!(f, "{}", t),
+        }
     }
 }
 
 /// Static types for the Ion macro system.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum StaticType {
-    Union(UnionType),
-    Tagged(IonType),
-    Untagged(IonType),
-    Fixed(FixedType),
+    Value(ValueType),
     Macro(Box<MacroType>),
 }
 
 impl Display for StaticType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            StaticType::Union(t) => write!(f, "{}", t),
-            StaticType::Tagged(t) => write!(f, "{}", t),
-            StaticType::Untagged(t) => write!(f, "{}", t),
-            StaticType::Fixed(t) => write!(f, "{}", t),
+            StaticType::Value(t) => write!(f, "{}", t),
             StaticType::Macro(t) => write!(f, "{}", t),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::macros::types::MacroType;
+    use crate::{IonResult, IonType};
+    use rstest::rstest;
+
+    #[rstest]
+    #[case("() => int", (ValueType::Tagged(IonType::Int), []).into())]
+    fn test_macro_type_display(
+        #[case] expected: &str,
+        #[case] macro_type: MacroType,
+    ) -> IonResult<()> {
+        assert_eq!(expected, format!("{}", macro_type).as_str());
+        Ok(())
     }
 }
