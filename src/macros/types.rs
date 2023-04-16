@@ -29,7 +29,7 @@ pub enum FixedType {
 
 impl FixedType {
     /// Parse a type name into a [`FixedType`].
-    fn try_parse<S: AsRef<str>>(as_str: S) -> IonResult<Self> {
+    fn try_from_str<S: AsRef<str>>(as_str: S) -> IonResult<Self> {
         use FixedType::*;
         let text = as_str.as_ref();
         match text {
@@ -44,7 +44,7 @@ impl FixedType {
             FLOAT16 => Ok(Float16),
             FLOAT32 => Ok(Float32),
             FLOAT64 => Ok(Float64),
-            _ => illegal_operation(format!("{} is not a fixed type", text)),
+            _ => illegal_operation(format!("'{}' is not a fixed type", text)),
         }
     }
 }
@@ -279,10 +279,43 @@ impl Display for StaticType {
 mod tests {
     use rstest::rstest;
 
-    use crate::macros::types::MacroType;
     use crate::{IonResult, IonType};
 
+    use super::FixedType::*;
     use super::*;
+
+    #[rstest]
+    #[case::uint8("uint8", UInt8)]
+    #[case::uint16("uint16", UInt16)]
+    #[case::uint32("uint32", UInt32)]
+    #[case::uint64("uint64", UInt64)]
+    #[case::int8("int8", Int8)]
+    #[case::int16("int16", Int16)]
+    #[case::int32("int32", Int32)]
+    #[case::int64("int64", Int64)]
+    #[case::float16("float16", Float16)]
+    #[case::float32("float32", Float32)]
+    #[case::float64("float64", Float64)]
+    fn test_fixed_type_parsing(
+        #[case] text: &str,
+        #[case] expected_type: FixedType,
+    ) -> IonResult<()> {
+        let actual_type = FixedType::try_from_str(text)?;
+        assert_eq!(expected_type, actual_type);
+        assert_eq!(text, format!("{}", actual_type).as_str());
+        Ok(())
+    }
+
+    #[rstest]
+    #[case::bad_case("Int8")]
+    #[case::foobar("foobar")]
+    #[case::float8("float8")]
+    fn test_fixed_type_invalid(#[case] bad_text: &str) {
+        match FixedType::try_from_str(bad_text) {
+            Ok(t) => panic!("Parsed invalid string as {}", t),
+            Err(_) => (),
+        }
+    }
 
     #[rstest]
     #[case("() -> int", (ValueType::Arbitrary(IonType::Int), []).into())]
