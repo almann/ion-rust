@@ -150,6 +150,23 @@ pub enum Cardinality {
     OneOrMore,
 }
 
+impl ParseStr for Cardinality {
+    fn parse_str<S>(as_str: S) -> IonResult<Self>
+    where
+        S: AsRef<str>,
+    {
+        use Cardinality::*;
+        let text = as_str.as_ref();
+        match text {
+            EXACTLY_ONE_SIGIL => Ok(ExactlyOne),
+            ZERO_OR_ONE_SIGIL => Ok(ZeroOrOne),
+            ZERO_OR_MORE_SIGIL => Ok(ZeroOrMore),
+            ONE_OR_MORE_SIGIL => Ok(OneOrMore),
+            _ => illegal_operation(format!("'{}' is not a cardinality", text)),
+        }
+    }
+}
+
 impl Display for Cardinality {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -318,6 +335,7 @@ mod tests {
 
     use crate::{IonResult, IonType};
 
+    use super::Cardinality::*;
     use super::FixedType::*;
     use super::UnionType::*;
     use super::*;
@@ -335,7 +353,16 @@ mod tests {
     #[case::float32("float32", Float32)]
     #[case::float64("float64", Float64)]
     #[case::any("any", Any)]
-    fn test_fixed_type_parsing<T>(#[case] text: &str, #[case] expected_type: T) -> IonResult<()>
+    #[case::number("number", Number)]
+    #[case::exact("exact", Exact)]
+    #[case::text("text", Text)]
+    #[case::lob("lob", Lob)]
+    #[case::any("sequence", Sequence)]
+    #[case::exactly_one("!", ExactlyOne)]
+    #[case::zero_or_one("?", ZeroOrOne)]
+    #[case::zero_or_more("*", ZeroOrMore)]
+    #[case::one_or_more("+", OneOrMore)]
+    fn test_type_parsing<T>(#[case] text: &str, #[case] expected_type: T) -> IonResult<()>
     where
         T: ParseStr + PartialEq + Debug + Display,
     {
@@ -372,6 +399,16 @@ mod tests {
     #[case::inexact("inexact")]
     fn test_union_type_invalid(#[case] bad_text: &str) {
         assert_invalid_parse::<_, UnionType>(bad_text)
+    }
+
+    #[rstest]
+    #[case::bangbang("!!")]
+    #[case::at("@")]
+    #[case::foobar("foobar")]
+    #[case::int32("int32")]
+    #[case::inexact("any")]
+    fn test_cardinality_invalid(#[case] bad_text: &str) {
+        assert_invalid_parse::<_, Cardinality>(bad_text)
     }
 
     #[rstest]
