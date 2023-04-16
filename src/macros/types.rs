@@ -162,12 +162,14 @@ impl Display for MacroType {
     }
 }
 
+// TODO Should tagged/tagless be modeled here--this is not a type constraint, but calling convention
+
 /// Basic value types.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ValueType {
     Union(UnionType),
     Tagged(IonType),
-    Untagged(IonType),
+    Tagless(IonType),
     Fixed(FixedType),
 }
 
@@ -176,7 +178,7 @@ impl Display for ValueType {
         match self {
             ValueType::Union(t) => write!(f, "{}", t),
             ValueType::Tagged(t) => write!(f, "{}", t),
-            ValueType::Untagged(t) => write!(f, "{} {}", UNTAGGED, t),
+            ValueType::Tagless(t) => write!(f, "{} {}", TAGLESS, t),
             ValueType::Fixed(t) => write!(f, "{}", t),
         }
     }
