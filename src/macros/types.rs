@@ -315,7 +315,9 @@ impl Display for ValueType {
 /// Static types for the Ion macro system.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum StaticType {
+    /// A regular value type.
     Value(ValueType),
+    /// A macro-shaped type.
     Macro(Box<MacroType>),
 }
 
