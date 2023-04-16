@@ -10,6 +10,21 @@ use crate::macros::constants::syntax::*;
 use crate::result::illegal_operation;
 use crate::{IonResult, IonType};
 
+// XXX this trait is here to allow us to parse generically from anything referencable as a &[u8]
+//     we cannot do this with TryFrom
+// TODO evaluate if this should even be here...
+
+/// Generically parse from anything that can be represented as `&str`.
+pub trait ParseStr
+where
+    Self: Sized,
+{
+    /// Parse the given `&str` reference into this type.
+    fn parse_str<S>(as_str: S) -> IonResult<Self>
+    where
+        S: AsRef<str>;
+}
+
 /// Macro types that are encoded without and fixed width.
 /// These types are structural constrained types over their general Ion equivalent.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -27,9 +42,11 @@ pub enum FixedType {
     Float64,
 }
 
-impl FixedType {
-    /// Parse a type name into a [`FixedType`].
-    fn try_from_str<S: AsRef<str>>(as_str: S) -> IonResult<Self> {
+impl ParseStr for FixedType {
+    fn parse_str<S>(as_str: S) -> IonResult<Self>
+    where
+        S: AsRef<str>,
+    {
         use FixedType::*;
         let text = as_str.as_ref();
         match text {
@@ -86,6 +103,25 @@ pub enum UnionType {
     Lob,
     /// A value that is a `sexp` or `list`.
     Sequence,
+}
+
+impl ParseStr for UnionType {
+    fn parse_str<S>(as_str: S) -> IonResult<Self>
+    where
+        S: AsRef<str>,
+    {
+        use UnionType::*;
+        let text = as_str.as_ref();
+        match text {
+            ANY => Ok(Any),
+            NUMBER => Ok(Number),
+            EXACT => Ok(Exact),
+            TEXT => Ok(Text),
+            LOB => Ok(Lob),
+            SEQUENCE => Ok(Sequence),
+            _ => illegal_operation(format!("'{}' is not a union type", text)),
+        }
+    }
 }
 
 impl Display for UnionType {
@@ -278,10 +314,12 @@ impl Display for StaticType {
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
+    use std::fmt::Debug;
 
     use crate::{IonResult, IonType};
 
     use super::FixedType::*;
+    use super::UnionType::*;
     use super::*;
 
     #[rstest]
@@ -296,25 +334,44 @@ mod tests {
     #[case::float16("float16", Float16)]
     #[case::float32("float32", Float32)]
     #[case::float64("float64", Float64)]
-    fn test_fixed_type_parsing(
-        #[case] text: &str,
-        #[case] expected_type: FixedType,
-    ) -> IonResult<()> {
-        let actual_type = FixedType::try_from_str(text)?;
+    #[case::any("any", Any)]
+    fn test_fixed_type_parsing<T>(#[case] text: &str, #[case] expected_type: T) -> IonResult<()>
+    where
+        T: ParseStr + PartialEq + Debug + Display,
+    {
+        let actual_type = T::parse_str(text)?;
         assert_eq!(expected_type, actual_type);
         assert_eq!(text, format!("{}", actual_type).as_str());
         Ok(())
     }
 
-    #[rstest]
-    #[case::bad_case("Int8")]
-    #[case::foobar("foobar")]
-    #[case::float8("float8")]
-    fn test_fixed_type_invalid(#[case] bad_text: &str) {
-        match FixedType::try_from_str(bad_text) {
+    fn assert_invalid_parse<S, T>(bad_text: S)
+    where
+        S: AsRef<str>,
+        T: ParseStr + PartialEq + Debug + Display,
+    {
+        match T::parse_str(bad_text) {
             Ok(t) => panic!("Parsed invalid string as {}", t),
             Err(_) => (),
         }
+    }
+
+    #[rstest]
+    #[case::bad_case("Int8")]
+    #[case::foobar("foobar")]
+    #[case::any("any")]
+    #[case::float8("float8")]
+    fn test_fixed_type_invalid(#[case] bad_text: &str) {
+        assert_invalid_parse::<_, FixedType>(bad_text)
+    }
+
+    #[rstest]
+    #[case::bad_case("ANY")]
+    #[case::foobar("foobar")]
+    #[case::int32("int32")]
+    #[case::inexact("inexact")]
+    fn test_union_type_invalid(#[case] bad_text: &str) {
+        assert_invalid_parse::<_, UnionType>(bad_text)
     }
 
     #[rstest]
