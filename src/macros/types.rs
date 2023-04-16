@@ -128,7 +128,15 @@ pub struct MacroType {
 
 impl Display for MacroType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        write!(f, "(")?;
+        for (i, param) in self.parameters.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", param)?;
+        }
+        write!(f, ")")?;
+        write!(f, " => {}", self.result)
     }
 }
 
