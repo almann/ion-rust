@@ -81,14 +81,13 @@ impl Display for UnionType {
     }
 }
 
-/// Cardinality of arguments for a macro parameter.
+/// Cardinality of values for a macro parameter.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Cardinality {
     ExactlyOne,
     ZeroOrOne,
     ZeroOrMore,
     OneOrMore,
-    Rest,
 }
 
 impl Display for Cardinality {
@@ -101,21 +100,75 @@ impl Display for Cardinality {
                 Cardinality::ZeroOrOne => ZERO_OR_ONE_SIGIL,
                 Cardinality::ZeroOrMore => ZERO_OR_MORE_SIGIL,
                 Cardinality::OneOrMore => ONE_OR_MORE_SIGIL,
-                Cardinality::Rest => ZERO_OR_MORE_SIGIL,
             }
         )
     }
 }
 
-// TODO expand support arrow `->` parameters
+/// Cardinality of arguments for a macro parameter.
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum ArgCardinality {
+    Common(Cardinality),
+    Rest,
+}
 
-/// Pair of type and cardinality
+impl ArgCardinality {
+    /// Returns the common [`Cardinality`] of this argument cardinality.
+    /// [`ArgCardinality::Rest`] is lowered into [`Cardinality::ZeroOrMore`]
+    fn cardinality(self) -> Cardinality {
+        match self {
+            ArgCardinality::Common(c) => c,
+            ArgCardinality::Rest => Cardinality::ZeroOrMore,
+        }
+    }
+}
+
+impl From<Cardinality> for ArgCardinality {
+    fn from(value: Cardinality) -> Self {
+        Self::Common(value)
+    }
+}
+
+impl Display for ArgCardinality {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ArgCardinality::Common(c) => write!(f, "{}", c),
+            ArgCardinality::Rest => write!(f, "{}", REST_SIGIL),
+        }
+    }
+}
+
+/// The signature of a single parameter of a macro.
+///
+/// Models the _argument cardinality_ and type--what types of sub-expressions are allowed in the
+/// argument position for the parameter and how many are allowed at that position.  Also models
+/// the _value cardinality_ and type--which are the value types of values that the argument(s)
+/// must evaluate to and the number of values.
 #[derive(Debug, Eq, PartialEq, Clone)]
-pub struct ParamType(pub Box<StaticType>, pub Cardinality);
+pub struct ParamType {
+    arg_type: Box<StaticType>,
+    arg_cardinality: ArgCardinality,
+    val_type: Box<ValueType>,
+    val_cardinality: Cardinality,
+}
 
 impl Display for ParamType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}{}", *self.0, self.1)
+        match (
+            &*self.arg_type,
+            self.arg_cardinality,
+            &*self.val_type,
+            self.val_cardinality,
+        ) {
+            (StaticType::Value(arg_type), ArgCardinality::Common(arg_card), val_type, val_card)
+                if *arg_type == *val_type && arg_card == val_card =>
+            {
+                write!(f, "{}{}", arg_type, arg_card)
+            }
+            (arg_type, arg_card, val_type, val_card) => {
+                write!(f, "{}{} -> {}{}", arg_type, arg_card, val_type, val_card)
+            }
+        }
     }
 }
 
@@ -158,18 +211,17 @@ impl Display for MacroType {
             write!(f, "{}", param)?;
         }
         write!(f, ")")?;
-        write!(f, " => {}", self.ret_type)
+        write!(f, " -> {}", self.ret_type)
     }
 }
 
-// TODO Should tagged/tagless be modeled here--this is not a type constraint, but calling convention
+// TODO add tagless if/when we sort out the details
 
 /// Basic value types.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ValueType {
     Union(UnionType),
-    Tagged(IonType),
-    Tagless(IonType),
+    Arbitrary(IonType),
     Fixed(FixedType),
 }
 
@@ -177,8 +229,7 @@ impl Display for ValueType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ValueType::Union(t) => write!(f, "{}", t),
-            ValueType::Tagged(t) => write!(f, "{}", t),
-            ValueType::Tagless(t) => write!(f, "{} {}", TAGLESS, t),
+            ValueType::Arbitrary(t) => write!(f, "{}", t),
             ValueType::Fixed(t) => write!(f, "{}", t),
         }
     }
@@ -208,7 +259,7 @@ mod tests {
     use rstest::rstest;
 
     #[rstest]
-    #[case("() => int", (ValueType::Tagged(IonType::Int), []).into())]
+    #[case("() -> int", (ValueType::Arbitrary(IonType::Int), []).into())]
     fn test_macro_type_display(
         #[case] expected: &str,
         #[case] macro_type: MacroType,

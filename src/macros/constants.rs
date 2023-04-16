@@ -32,6 +32,4 @@ pub(crate) mod syntax {
     pub const ZERO_OR_MORE_SIGIL: &str = "*";
     pub const ONE_OR_MORE_SIGIL: &str = "+";
     pub const REST_SIGIL: &str = "...";
-
-    pub const TAGLESS: &str = "tagless";
 }
