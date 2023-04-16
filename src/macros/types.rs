@@ -4,9 +4,11 @@
 //!
 //! This goes above the runtime type system of Ion within the macro system.
 
-use crate::macros::constants::syntax::*;
-use crate::IonType;
 use std::fmt::{Display, Formatter};
+
+use crate::macros::constants::syntax::*;
+use crate::result::illegal_operation;
+use crate::{IonResult, IonType};
 
 /// Macro types that are encoded without and fixed width.
 /// These types are structural constrained types over their general Ion equivalent.
@@ -23,6 +25,28 @@ pub enum FixedType {
     Float16,
     Float32,
     Float64,
+}
+
+impl FixedType {
+    /// Parse a type name into a [`FixedType`].
+    fn try_parse<S: AsRef<str>>(as_str: S) -> IonResult<Self> {
+        use FixedType::*;
+        let text = as_str.as_ref();
+        match text {
+            UINT8 => Ok(UInt8),
+            UINT16 => Ok(UInt16),
+            UINT32 => Ok(UInt32),
+            UINT64 => Ok(UInt64),
+            INT8 => Ok(Int8),
+            INT16 => Ok(Int16),
+            INT32 => Ok(Int32),
+            INT64 => Ok(Int64),
+            FLOAT16 => Ok(Float16),
+            FLOAT32 => Ok(Float32),
+            FLOAT64 => Ok(Float64),
+            _ => illegal_operation(format!("{} is not a fixed type", text)),
+        }
+    }
 }
 
 impl Display for FixedType {
@@ -253,10 +277,12 @@ impl Display for StaticType {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use rstest::rstest;
+
     use crate::macros::types::MacroType;
     use crate::{IonResult, IonType};
-    use rstest::rstest;
+
+    use super::*;
 
     #[rstest]
     #[case("() -> int", (ValueType::Arbitrary(IonType::Int), []).into())]
