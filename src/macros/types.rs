@@ -68,21 +68,22 @@ impl ParseStr for FixedType {
 
 impl Display for FixedType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use FixedType::*;
         write!(
             f,
             "{}",
             match self {
-                FixedType::UInt8 => UINT8,
-                FixedType::UInt16 => UINT16,
-                FixedType::UInt32 => UINT32,
-                FixedType::UInt64 => UINT64,
-                FixedType::Int8 => INT8,
-                FixedType::Int16 => INT16,
-                FixedType::Int32 => INT32,
-                FixedType::Int64 => INT64,
-                FixedType::Float16 => FLOAT16,
-                FixedType::Float32 => FLOAT32,
-                FixedType::Float64 => FLOAT64,
+                UInt8 => UINT8,
+                UInt16 => UINT16,
+                UInt32 => UINT32,
+                UInt64 => UINT64,
+                Int8 => INT8,
+                Int16 => INT16,
+                Int32 => INT32,
+                Int64 => INT64,
+                Float16 => FLOAT16,
+                Float32 => FLOAT32,
+                Float64 => FLOAT64,
             }
         )
     }
@@ -126,16 +127,17 @@ impl ParseStr for UnionType {
 
 impl Display for UnionType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use UnionType::*;
         write!(
             f,
             "{}",
             match self {
-                UnionType::Any => ANY,
-                UnionType::Number => NUMBER,
-                UnionType::Exact => EXACT,
-                UnionType::Text => TEXT,
-                UnionType::Lob => LOB,
-                UnionType::Sequence => SEQUENCE,
+                Any => ANY,
+                Number => NUMBER,
+                Exact => EXACT,
+                Text => TEXT,
+                Lob => LOB,
+                Sequence => SEQUENCE,
             }
         )
     }
@@ -169,14 +171,15 @@ impl ParseStr for Cardinality {
 
 impl Display for Cardinality {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use Cardinality::*;
         write!(
             f,
             "{}",
             match self {
-                Cardinality::ExactlyOne => EXACTLY_ONE_SIGIL,
-                Cardinality::ZeroOrOne => ZERO_OR_ONE_SIGIL,
-                Cardinality::ZeroOrMore => ZERO_OR_MORE_SIGIL,
-                Cardinality::OneOrMore => ONE_OR_MORE_SIGIL,
+                ExactlyOne => EXACTLY_ONE_SIGIL,
+                ZeroOrOne => ZERO_OR_ONE_SIGIL,
+                ZeroOrMore => ZERO_OR_MORE_SIGIL,
+                OneOrMore => ONE_OR_MORE_SIGIL,
             }
         )
     }
@@ -208,9 +211,10 @@ impl From<Cardinality> for ArgCardinality {
 
 impl Display for ArgCardinality {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use ArgCardinality::*;
         match self {
-            ArgCardinality::Common(c) => write!(f, "{}", c),
-            ArgCardinality::Rest => write!(f, "{}", REST_SIGIL),
+            Common(c) => write!(f, "{}", c),
+            Rest => write!(f, "{}", REST_SIGIL),
         }
     }
 }
@@ -304,10 +308,11 @@ pub enum ValueType {
 
 impl Display for ValueType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use ValueType::*;
         match self {
-            ValueType::Union(t) => write!(f, "{}", t),
-            ValueType::Arbitrary(t) => write!(f, "{}", t),
-            ValueType::Fixed(t) => write!(f, "{}", t),
+            Union(t) => write!(f, "{}", t),
+            Arbitrary(t) => write!(f, "{}", t),
+            Fixed(t) => write!(f, "{}", t),
         }
     }
 }
@@ -323,9 +328,10 @@ pub enum StaticType {
 
 impl Display for StaticType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use StaticType::*;
         match self {
-            StaticType::Value(t) => write!(f, "{}", t),
-            StaticType::Macro(t) => write!(f, "{}", t),
+            Value(t) => write!(f, "{}", t),
+            Macro(t) => write!(f, "{}", t),
         }
     }
 }
