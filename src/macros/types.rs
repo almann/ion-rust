@@ -9,7 +9,7 @@ use crate::result::illegal_operation;
 use crate::{IonResult, IonType};
 use std::fmt::{Display, Formatter};
 
-// XXX this trait is here to allow us to parse generically from anything referencable as a &[u8]
+// XXX this trait is here to allow us to parse generically from anything referencable as a &str
 //     we cannot do this with TryFrom
 // TODO evaluate if this should even be here...
 
