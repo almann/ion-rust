@@ -8,6 +8,7 @@
 
 use crate::element::{Bytes, Value};
 use crate::result::illegal_operation;
+use crate::text::text_formatter::IonValueFormatter;
 use crate::{Decimal, Int, IonError, IonType, Str, Symbol, Timestamp};
 use std::fmt::{Display, Formatter};
 
@@ -51,6 +52,9 @@ impl Display for ContainerType {
     }
 }
 
+// XXX not really happy about the copy/paste/delete for this...
+//     If Value was factored as scalar/collection that would've been nice
+
 /// Subset of [`Value`] that is restricted to non-container types.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AtomValue {
@@ -72,14 +76,14 @@ impl TryFrom<Value> for AtomValue {
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         use AtomValue::*;
         match value {
-            Value::Null(t) => Ok(Null(t)),
-            Value::Bool(b) => Ok(Bool(b)),
-            Value::Int(i) => Ok(Int(i)),
-            Value::Float(f) => Ok(Float(f)),
-            Value::Decimal(d) => Ok(Decimal(d)),
-            Value::Timestamp(ts) => Ok(Timestamp(ts)),
+            Value::Null(ion_type) => Ok(Null(ion_type)),
+            Value::Bool(bool) => Ok(Bool(bool)),
+            Value::Int(int) => Ok(Int(int)),
+            Value::Float(float) => Ok(Float(float)),
+            Value::Decimal(decimal) => Ok(Decimal(decimal)),
+            Value::Timestamp(timestamp) => Ok(Timestamp(timestamp)),
             Value::String(text) => Ok(String(text)),
-            Value::Symbol(sym) => Ok(Symbol(sym)),
+            Value::Symbol(symbol) => Ok(Symbol(symbol)),
             Value::Blob(bytes) => Ok(Blob(bytes)),
             Value::Clob(bytes) => Ok(Clob(bytes)),
             Value::SExp(_) => illegal_operation("SExp is not an atom value"),
@@ -89,7 +93,44 @@ impl TryFrom<Value> for AtomValue {
     }
 }
 
-// TODO implement me!
+impl Into<Value> for AtomValue {
+    fn into(self) -> Value {
+        use AtomValue::*;
+        match self {
+            Null(ion_type) => Value::Null(ion_type),
+            Bool(bool) => Value::Bool(bool),
+            Int(int) => Value::Int(int),
+            Float(float) => Value::Float(float),
+            Decimal(decimal) => Value::Decimal(decimal),
+            Timestamp(timestamp) => Value::Timestamp(timestamp),
+            String(text) => Value::String(text),
+            Symbol(symbol) => Value::Symbol(symbol),
+            Blob(bytes) => Value::Blob(bytes),
+            Clob(bytes) => Value::Clob(bytes),
+        }
+    }
+}
+
+impl Display for AtomValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use AtomValue::*;
+        let mut ivf = IonValueFormatter { output: f };
+        match self {
+            Null(ion_type) => ivf.format_null(*ion_type),
+            Bool(bool) => ivf.format_bool(*bool),
+            Int(int) => ivf.format_integer(int),
+            Float(float) => ivf.format_float(*float),
+            Decimal(decimal) => ivf.format_decimal(decimal),
+            Timestamp(timestamp) => ivf.format_timestamp(timestamp),
+            String(text) => ivf.format_string(text),
+            Symbol(symbol) => ivf.format_symbol(symbol),
+            Blob(bytes) => ivf.format_blob(bytes),
+            Clob(bytes) => ivf.format_clob(bytes),
+        }
+        .map_err(|_| std::fmt::Error)?;
+        Ok(())
+    }
+}
 
 /// Represents a token within the stream.
 #[derive(Debug, PartialEq, Clone)]
@@ -97,8 +138,91 @@ pub enum Token {
     Atom(AtomValue),
     StartContainer(ContainerType),
     EndContainer(ContainerType),
-    /// End of the stream
-    End,
+    EndStream,
 }
 
-pub struct Event {}
+pub struct Event {
+    // TODO implement me!
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AtomValue::*;
+    use super::ContainerType::*;
+    use super::*;
+    use crate::{IonError, IonResult, IonType};
+    use rstest::rstest;
+    use std::fmt::Debug;
+
+    /// An arbitrary timestamp as a filler for testing purposes.
+    fn sample_timestamp() -> crate::Timestamp {
+        crate::Timestamp::with_year(2023).build().unwrap()
+    }
+
+    #[rstest]
+    #[case::cont_sexp(SExp, IonType::SExp)]
+    #[case::cont_list(List, IonType::List)]
+    #[case::cont_struct(Struct, IonType::Struct)]
+    #[case::atom_null(Null(IonType::Null), Value::Null(IonType::Null))]
+    #[case::atom_bool(Bool(false), Value::Bool(false))]
+    #[case::atom_int(Int(3.into()), Value::Int(3.into()))]
+    #[case::atom_float(Float(1.1), Value::Float(1.1))]
+    #[case::atom_decimal(Decimal(42.into()), Value::Decimal(42.into()))]
+    #[case::atom_timestamp(Timestamp(sample_timestamp()), Value::Timestamp(sample_timestamp()))]
+    #[case::atom_symbol(Symbol("foo".into()), Value::Symbol("foo".into()))]
+    #[case::atom_string(String("bar".into()), Value::String("bar".into()))]
+    #[case::atom_clob(Clob("hello".into()), Value::Clob("hello".into()))]
+    #[case::atom_blob(Blob("world".into()), Value::Blob("world".into()))]
+    fn test_valid_conversion<F, T>(#[case] expected: T, #[case] from: F) -> IonResult<()>
+    where
+        T: TryFrom<F, Error = IonError> + Into<F> + PartialEq + Debug + Display,
+        F: PartialEq + Debug + Display + Clone,
+    {
+        let from_clone = from.clone();
+        let actual = from_clone.try_into()?;
+        assert_eq!(expected, actual);
+        assert_eq!(from, actual.into());
+
+        Ok(())
+    }
+
+    fn test_invalid_conversion<F, T>(bad_from: F)
+    where
+        T: TryFrom<F, Error = IonError> + Into<F> + PartialEq + Debug + Display,
+        F: PartialEq + Debug + Display + Clone,
+    {
+        let from_clone = bad_from.clone();
+        match T::try_from(bad_from) {
+            Ok(t) => panic!("Unexpected conversion from {} to {}", from_clone, t),
+            Err(_) => (),
+        }
+    }
+
+    #[rstest]
+    #[case::null(IonType::Null)]
+    #[case::bool(IonType::Bool)]
+    #[case::int(IonType::Int)]
+    #[case::float(IonType::Float)]
+    #[case::decimal(IonType::Decimal)]
+    #[case::timestamp(IonType::Timestamp)]
+    #[case::symbol(IonType::Symbol)]
+    #[case::string(IonType::String)]
+    #[case::clob(IonType::Clob)]
+    #[case::blob(IonType::Blob)]
+    fn test_invalid_container_type_conversion(#[case] bad_type: IonType) {
+        test_invalid_conversion::<_, ContainerType>(bad_type)
+    }
+
+    /// An arbitrary empty struct for testing the wrapper types.
+    fn empty_struct() -> crate::element::Struct {
+        crate::element::Struct::builder().build()
+    }
+
+    #[rstest]
+    #[case::sexp(Value::SExp(vec![].into()))]
+    #[case::list(Value::List(vec![].into()))]
+    #[case::strct(Value::Struct(empty_struct()))]
+    fn test_invalid_atom_conversion(#[case] bad_value: Value) {
+        test_invalid_conversion::<_, AtomValue>(bad_value)
+    }
+}
