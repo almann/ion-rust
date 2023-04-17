@@ -192,6 +192,23 @@ pub enum ArgCardinality {
     Rest,
 }
 
+impl ParseStr for ArgCardinality {
+    fn parse_str<S>(as_str: S) -> IonResult<Self>
+    where
+        S: AsRef<str>,
+    {
+        use ArgCardinality::*;
+        let text = as_str.as_ref();
+        if let Ok(cardinality) = Cardinality::parse_str(text) {
+            return Ok(Common(cardinality));
+        }
+        match text {
+            REST_SIGIL => Ok(Rest),
+            _ => illegal_operation(format!("'{}' is not an argument cardinality", text)),
+        }
+    }
+}
+
 impl ArgCardinality {
     /// Returns the common [`Cardinality`] of this argument cardinality.
     /// [`ArgCardinality::Rest`] is lowered into [`Cardinality::ZeroOrMore`]
@@ -370,6 +387,11 @@ mod tests {
     #[case::zero_or_one("?", ZeroOrOne)]
     #[case::zero_or_more("*", ZeroOrMore)]
     #[case::one_or_more("+", OneOrMore)]
+    #[case::arg_exactly_one("!", ArgCardinality::Common(ExactlyOne))]
+    #[case::arg_zero_or_one("?", ArgCardinality::Common(ZeroOrOne))]
+    #[case::arg_zero_or_more("*", ArgCardinality::Common(ZeroOrMore))]
+    #[case::arg_one_or_more("+", ArgCardinality::Common(OneOrMore))]
+    #[case::arg_rest("...", ArgCardinality::Rest)]
     fn test_type_parsing<T>(#[case] text: &str, #[case] expected_type: T) -> IonResult<()>
     where
         T: ParseStr + PartialEq + Debug + Display,
@@ -415,8 +437,19 @@ mod tests {
     #[case::foobar("foobar")]
     #[case::int32("int32")]
     #[case::inexact("any")]
+    #[case::rest("...")]
     fn test_cardinality_invalid(#[case] bad_text: &str) {
         assert_invalid_parse::<_, Cardinality>(bad_text)
+    }
+
+    #[rstest]
+    #[case::bangbang("!!")]
+    #[case::at("@")]
+    #[case::foobar("foobar")]
+    #[case::int32("int32")]
+    #[case::inexact("any")]
+    fn test_arg_cardinality_invalid(#[case] bad_text: &str) {
+        assert_invalid_parse::<_, ArgCardinality>(bad_text)
     }
 
     #[rstest]
