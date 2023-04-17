@@ -4,11 +4,10 @@
 //!
 //! This goes above the runtime type system of Ion within the macro system.
 
-use std::fmt::{Display, Formatter};
-
 use crate::macros::constants::syntax::*;
 use crate::result::illegal_operation;
 use crate::{IonResult, IonType};
+use std::fmt::{Display, Formatter};
 
 // XXX this trait is here to allow us to parse generically from anything referencable as a &[u8]
 //     we cannot do this with TryFrom
@@ -355,15 +354,13 @@ impl Display for StaticType {
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
-    use std::fmt::Debug;
-
-    use crate::{IonResult, IonType};
-
     use super::Cardinality::*;
     use super::FixedType::*;
     use super::UnionType::*;
     use super::*;
+    use crate::{IonResult, IonType};
+    use rstest::rstest;
+    use std::fmt::Debug;
 
     #[rstest]
     #[case::uint8("uint8", UInt8)]
