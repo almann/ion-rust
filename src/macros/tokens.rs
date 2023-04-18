@@ -11,7 +11,6 @@
 //! with values without pulling in fully materializing the tree.
 
 use crate::element::{Annotations, Bytes, Value};
-use crate::macros::tokens::Thunk::Materialized;
 use crate::result::illegal_operation;
 use crate::text::text_formatter::IonValueFormatter;
 use crate::{
@@ -143,8 +142,8 @@ impl Display for AtomValue {
 
 type ThunkFn<'a, T> = Box<dyn FnOnce() -> IonResult<T> + 'a>;
 
-/// A very simple, consuming lazy value.
-enum Thunk<'a, T> {
+/// A simple, consuming lazy value that optionally is an owned value which we call materialized.
+pub enum Thunk<'a, T> {
     Deferred(ThunkFn<'a, T>),
     Materialized(T),
 }
@@ -152,9 +151,10 @@ enum Thunk<'a, T> {
 impl<'a, T> Thunk<'a, T> {
     #[inline]
     pub fn wrap(value: T) -> Thunk<'static, T> {
-        Materialized(value)
+        Thunk::Materialized(value)
     }
 
+    /// Evaluates the thunk, consuming it and returning the underlying value.
     pub fn evaluate(self) -> IonResult<T> {
         use Thunk::*;
         match self {
@@ -171,7 +171,15 @@ impl<'a, T> Thunk<'a, T> {
                 let value = func()?;
                 Ok(Materialized(value))
             }
-            Materialized(value) => Ok(Materialized(value)),
+            Materialized(value) => Ok(Thunk::wrap(value)),
+        }
+    }
+
+    /// Convenience to determine if the thunk is materialized.
+    pub fn is_materialized(&self) -> bool {
+        match self {
+            Thunk::Deferred(_) => false,
+            Thunk::Materialized(_) => true,
         }
     }
 }
@@ -192,6 +200,19 @@ pub enum Token<'a> {
     EndStream,
 }
 
+impl<'a> Token<'a> {
+    /// Consume this token one that owns its content.
+    fn materialize(self) -> IonResult<Token<'static>> {
+        use Token::*;
+        Ok(match self {
+            Atom(thunk) => Atom(thunk.materialize()?),
+            StartContainer(container_type) => StartContainer(container_type),
+            EndContainer(container_type) => EndContainer(container_type),
+            EndStream => EndStream,
+        })
+    }
+}
+
 /// A token with annotations and a field name.
 pub struct AnnotatedToken<'a> {
     annotations: AnnotationsThunk<'a>,
@@ -200,9 +221,27 @@ pub struct AnnotatedToken<'a> {
 }
 
 impl<'a> AnnotatedToken<'a> {
-    /// Consume this event into an event that has no bounds--owning its contents.
-    fn materialize(self) -> AnnotatedToken<'static> {
-        todo!()
+    fn new(
+        annotations: AnnotationsThunk<'a>,
+        field_name: Option<Symbol>,
+        token: Token<'a>,
+    ) -> Self {
+        Self {
+            annotations,
+            field_name,
+            token,
+        }
+    }
+}
+
+impl<'a> AnnotatedToken<'a> {
+    /// Consume this annotated token into one that owns its content.
+    fn materialize(self) -> IonResult<AnnotatedToken<'static>> {
+        Ok(AnnotatedToken::<'static>::new(
+            self.annotations.materialize()?,
+            self.field_name,
+            self.token.materialize()?,
+        ))
     }
 }
 
@@ -219,8 +258,9 @@ pub enum Instruction {
 
 /// Provides an iterator-like API over Ion data as [`AnnotatedToken`].
 trait TokenSource {
-    /// Advances the source to the next event.  Returns a reference to an event or an error
-    /// if there is some problem with the underlying stream
+    /// Advances the source to the next token.
+    ///
+    /// Returns that token or an error if there is some problem with the underlying stream.
     fn next(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken>;
 }
 
@@ -314,5 +354,20 @@ mod tests {
     #[case::strct(Value::Struct(empty_struct()))]
     fn test_invalid_atom_conversion(#[case] bad_value: Value) {
         test_invalid_conversion::<_, AtomValue>(bad_value)
+    }
+
+    #[test]
+    fn test_thunk_materialize() -> IonResult<()> {
+        let thunk = {
+            let i = 15;
+            let i_ref = &i;
+            let func: ThunkFn<i32> = Box::new(|| return Ok(*i_ref));
+            let deferred = Thunk::Deferred(func);
+            assert!(!deferred.is_materialized());
+            deferred.materialize()?
+        };
+        assert!(thunk.is_materialized());
+        assert_eq!(15, thunk.evaluate()?);
+        Ok(())
     }
 }
