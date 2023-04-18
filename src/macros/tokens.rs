@@ -187,9 +187,7 @@ impl<'a> AnnotatedToken<'a> {
             token,
         }
     }
-}
 
-impl<'a> AnnotatedToken<'a> {
     /// Consume this annotated token into one that owns its content.
     fn materialize(self) -> IonResult<AnnotatedToken<'static>> {
         Ok(AnnotatedToken::<'static>::new(
@@ -197,6 +195,12 @@ impl<'a> AnnotatedToken<'a> {
             self.field_name,
             self.token.materialize()?,
         ))
+    }
+}
+
+impl<'a> From<Token<'a>> for AnnotatedToken<'a> {
+    fn from(value: Token<'a>) -> Self {
+        AnnotatedToken::new(Thunk::wrap(Annotations::empty()), None, value)
     }
 }
 
@@ -228,6 +232,37 @@ where
     R: IonReader<Item = StreamItem, Symbol = Symbol>,
 {
     reader: R,
+}
+
+impl<R> TokenSource for ReaderTokenSource<R>
+where
+    R: IonReader<Item = StreamItem, Symbol = Symbol>,
+{
+    fn next(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken> {
+        use Instruction::*;
+        Ok(match instruction {
+            Next => {
+                let item = self.reader.next()?;
+                match item {
+                    StreamItem::Value(_ion_type) => todo!(),
+                    StreamItem::Null(_ion_type) => todo!(),
+                    StreamItem::Nothing => match self.reader.parent_type() {
+                        None => Token::EndStream.into(),
+                        Some(IonType::SExp) => Token::EndContainer(ContainerType::SExp).into(),
+                        Some(IonType::List) => Token::EndContainer(ContainerType::List).into(),
+                        Some(IonType::Struct) => Token::EndContainer(ContainerType::Struct).into(),
+                        Some(ion_type) => {
+                            return illegal_operation(format!(
+                                "Unexpected non-container type: {}",
+                                ion_type
+                            ))
+                        }
+                    },
+                }
+            }
+            NextEnd => todo!(),
+        })
+    }
 }
 
 #[cfg(test)]
