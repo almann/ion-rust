@@ -252,8 +252,8 @@ pub enum Instruction {
     Next,
     /// Skip to the end of the current container.
     /// If within a container, will skip to the end of the container and return that event.
-    /// If not within a container, will skip to the end of the stream.
-    ToEnd,
+    /// If not within a container, this operation is invalid.
+    NextEnd,
 }
 
 /// Provides an iterator-like API over Ion data as [`AnnotatedToken`].
