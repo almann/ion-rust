@@ -21,6 +21,14 @@ impl<'a, T> Thunk<'a, T> {
         Thunk::Materialized(value)
     }
 
+    #[inline]
+    pub fn defer<F>(closure: F) -> Thunk<'a, T>
+    where
+        F: FnOnce() -> IonResult<T> + 'a,
+    {
+        Thunk::Deferred(Box::new(closure))
+    }
+
     /// Evaluates the thunk, consuming it and returning the underlying value.
     pub fn evaluate(self) -> IonResult<T> {
         use Thunk::*;

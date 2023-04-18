@@ -100,24 +100,6 @@ impl TryFrom<Value> for AtomValue {
     }
 }
 
-impl Into<Value> for AtomValue {
-    fn into(self) -> Value {
-        use AtomValue::*;
-        match self {
-            Null(ion_type) => Value::Null(ion_type),
-            Bool(bool) => Value::Bool(bool),
-            Int(int) => Value::Int(int),
-            Float(float) => Value::Float(float),
-            Decimal(decimal) => Value::Decimal(decimal),
-            Timestamp(timestamp) => Value::Timestamp(timestamp),
-            String(text) => Value::String(text),
-            Symbol(symbol) => Value::Symbol(symbol),
-            Blob(bytes) => Value::Blob(bytes),
-            Clob(bytes) => Value::Clob(bytes),
-        }
-    }
-}
-
 impl Display for AtomValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         use AtomValue::*;
@@ -156,7 +138,7 @@ pub enum Token<'a> {
 }
 
 impl<'a> Token<'a> {
-    /// Consume this token one that owns its content.
+    /// Consume this token to one that owns its content.
     fn materialize(self) -> IonResult<Token<'static>> {
         use Token::*;
         Ok(match self {
@@ -165,6 +147,18 @@ impl<'a> Token<'a> {
             EndContainer(container_type) => EndContainer(container_type),
             EndStream => EndStream,
         })
+    }
+}
+
+impl From<AtomValue> for Token<'static> {
+    fn from(value: AtomValue) -> Self {
+        Token::Atom(Thunk::wrap(value))
+    }
+}
+
+impl<'a> From<AtomThunk<'a>> for Token<'a> {
+    fn from(thunk: AtomThunk<'a>) -> Self {
+        Token::Atom(thunk)
     }
 }
 
@@ -234,29 +228,67 @@ where
     reader: R,
 }
 
+impl<R> ReaderTokenSource<R>
+where
+    R: IonReader<Item = StreamItem, Symbol = Symbol>,
+{
+    fn annotations_thunk(&self) -> AnnotationsThunk {
+        Thunk::defer(|| self.reader.annotations().collect())
+    }
+}
+
 impl<R> TokenSource for ReaderTokenSource<R>
 where
     R: IonReader<Item = StreamItem, Symbol = Symbol>,
 {
     fn next(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken> {
+        use AtomValue::*;
         use Instruction::*;
+
         Ok(match instruction {
             Next => {
                 let item = self.reader.next()?;
                 match item {
-                    StreamItem::Value(_ion_type) => todo!(),
-                    StreamItem::Null(_ion_type) => todo!(),
+                    StreamItem::Value(ion_type) | StreamItem::Null(ion_type) => {
+                        let annotations_thunk = self.annotations_thunk();
+                        let field_name = self.reader.field_name().ok();
+                        let token = if self.reader.is_null() {
+                            Null(ion_type).into()
+                        } else {
+                            match self.reader.ion_type() {
+                                None => illegal_operation("No type for value from reader")?,
+                                Some(IonType::Null) => {
+                                    illegal_operation("Null type for value from reader")?
+                                }
+                                Some(IonType::Bool) => {
+                                    todo!()
+                                    //FIXME the following is broken because we need more than one closure
+                                    //Thunk::defer(|| Ok(Bool(self.reader.read_bool()?))).into()
+                                }
+                                Some(IonType::Int) => todo!(),
+                                Some(IonType::Float) => todo!(),
+                                Some(IonType::Decimal) => todo!(),
+                                Some(IonType::Timestamp) => todo!(),
+                                Some(IonType::Symbol) => todo!(),
+                                Some(IonType::String) => todo!(),
+                                Some(IonType::Clob) => todo!(),
+                                Some(IonType::Blob) => todo!(),
+                                Some(IonType::List) => todo!(),
+                                Some(IonType::SExp) => todo!(),
+                                Some(IonType::Struct) => todo!(),
+                            }
+                        };
+                        AnnotatedToken::new(annotations_thunk, field_name, token)
+                    }
                     StreamItem::Nothing => match self.reader.parent_type() {
                         None => Token::EndStream.into(),
                         Some(IonType::SExp) => Token::EndContainer(ContainerType::SExp).into(),
                         Some(IonType::List) => Token::EndContainer(ContainerType::List).into(),
                         Some(IonType::Struct) => Token::EndContainer(ContainerType::Struct).into(),
-                        Some(ion_type) => {
-                            return illegal_operation(format!(
-                                "Unexpected non-container type: {}",
-                                ion_type
-                            ))
-                        }
+                        Some(ion_type) => illegal_operation(format!(
+                            "Unexpected non-container type: {}",
+                            ion_type
+                        ))?,
                     },
                 }
             }

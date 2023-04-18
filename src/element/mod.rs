@@ -38,6 +38,7 @@ pub use self::bytes::Bytes;
 pub use annotations::Annotations;
 pub use lob::{Blob, Clob};
 
+use crate::macros::tokens::AtomValue;
 pub use list::List;
 pub use r#struct::Struct;
 pub use sequence::Sequence;
@@ -215,6 +216,23 @@ impl From<SExp> for Value {
 impl From<Struct> for Value {
     fn from(struct_val: Struct) -> Self {
         Value::Struct(struct_val)
+    }
+}
+
+impl From<AtomValue> for Value {
+    fn from(value: AtomValue) -> Self {
+        match value {
+            AtomValue::Null(ion_type) => Value::Null(ion_type),
+            AtomValue::Bool(bool) => Value::Bool(bool),
+            AtomValue::Int(int) => Value::Int(int),
+            AtomValue::Float(float) => Value::Float(float),
+            AtomValue::Decimal(decimal) => Value::Decimal(decimal),
+            AtomValue::Timestamp(timestamp) => Value::Timestamp(timestamp),
+            AtomValue::String(text) => Value::String(text),
+            AtomValue::Symbol(symbol) => Value::Symbol(symbol),
+            AtomValue::Blob(bytes) => Value::Blob(bytes),
+            AtomValue::Clob(bytes) => Value::Clob(bytes),
+        }
     }
 }
 

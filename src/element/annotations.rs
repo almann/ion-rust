@@ -122,3 +122,9 @@ impl<'a> IntoIterator for &'a Annotations {
         SymbolsIterator::new(self.symbols.as_slice())
     }
 }
+
+impl FromIterator<Symbol> for Annotations {
+    fn from_iter<T: IntoIterator<Item = Symbol>>(iter: T) -> Self {
+        Annotations::new(iter.into_iter().collect())
+    }
+}
