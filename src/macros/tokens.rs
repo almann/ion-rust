@@ -11,6 +11,7 @@
 //! with values without pulling in fully materializing the tree.
 
 use crate::element::{Annotations, Bytes, Value};
+use crate::macros::tokens::Thunk::Materialized;
 use crate::result::illegal_operation;
 use crate::text::text_formatter::IonValueFormatter;
 use crate::{
@@ -140,24 +141,58 @@ impl Display for AtomValue {
 
 // TODO consider making these thunks memoize to avoid the only once restriction
 
+type ThunkFn<'a, T> = Box<dyn FnOnce() -> IonResult<T> + 'a>;
+
+/// A very simple, consuming lazy value.
+enum Thunk<'a, T> {
+    Deferred(ThunkFn<'a, T>),
+    Materialized(T),
+}
+
+impl<'a, T> Thunk<'a, T> {
+    #[inline]
+    pub fn wrap(value: T) -> Thunk<'static, T> {
+        Materialized(value)
+    }
+
+    pub fn evaluate(self) -> IonResult<T> {
+        use Thunk::*;
+        match self {
+            Deferred(func) => func(),
+            Materialized(value) => Ok(value),
+        }
+    }
+
+    /// Evaluates the deferred value and returns it as a thunk.
+    pub fn materialize(self) -> IonResult<Thunk<'static, T>> {
+        use Thunk::*;
+        match self {
+            Deferred(func) => {
+                let value = func()?;
+                Ok(Materialized(value))
+            }
+            Materialized(value) => Ok(Materialized(value)),
+        }
+    }
+}
+
 /// Deferred computation of an atom.
-pub type AtomThunk<'a> = Box<dyn FnOnce() -> IonResult<AtomValue> + 'a>;
+pub type AtomThunk<'a> = Thunk<'a, AtomValue>;
 
 // XXX ideally we'd have our annotations return an borrowing iterator...
 
 /// Deferred computation of annotations.
-pub type AnnotationsThunk<'a> = Box<dyn FnOnce() -> IonResult<Annotations> + 'a>;
+pub type AnnotationsThunk<'a> = Thunk<'a, Annotations>;
 
 /// Represents a token within the stream.
 pub enum Token<'a> {
-    /// An atomic value--the underlying thunk is g
     Atom(AtomThunk<'a>),
     StartContainer(ContainerType),
     EndContainer(ContainerType),
     EndStream,
 }
 
-/// A token with some set of annotations.
+/// A token with annotations and a field name.
 pub struct AnnotatedToken<'a> {
     annotations: AnnotationsThunk<'a>,
     field_name: Option<Symbol>,
