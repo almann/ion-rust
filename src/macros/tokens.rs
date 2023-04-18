@@ -10,9 +10,10 @@
 use crate::element::{Annotations, Bytes, Value};
 use crate::result::illegal_operation;
 use crate::text::text_formatter::IonValueFormatter;
-use crate::{Decimal, Int, IonError, IonReader, IonResult, IonType, Str, Symbol, Timestamp};
+use crate::{
+    Decimal, Int, IonError, IonReader, IonResult, IonType, Str, StreamItem, Symbol, Timestamp,
+};
 use std::fmt::{Display, Formatter};
-use std::rc::Rc;
 
 /// Subset of [`IonType`] that are strictly the container types.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -134,11 +135,17 @@ impl Display for AtomValue {
     }
 }
 
+// TODO consider making these thunks memoize to avoid the only once restriction
+
 /// Deferred computation of an atom.
 pub type AtomThunk<'a> = Box<dyn FnMut() -> IonResult<AtomValue> + 'a>;
 
+/// Deferred computation of annotations.
+pub type AnnotationsThunk<'a> = Box<dyn FnMut() -> IonResult<Annotations> + 'a>;
+
 /// Represents a token within the stream.
 pub enum Token<'a> {
+    /// An atomic value--the underlying thunk is g
     Atom(AtomThunk<'a>),
     StartContainer(ContainerType),
     EndContainer(ContainerType),
@@ -147,13 +154,14 @@ pub enum Token<'a> {
 
 /// A token with some set of annotations.
 pub struct AnnotatedToken<'a> {
-    annotations: Rc<Annotations>,
+    annotations: AnnotationsThunk<'a>,
+    field_name: Option<Symbol>,
     token: Token<'a>,
 }
 
 impl<'a> AnnotatedToken<'a> {
-    /// Materializes this event into an event that has no bounds
-    fn materialize(&mut self) -> AnnotatedToken<'static> {
+    /// Consume this event into an event that has no bounds--owning its contents.
+    fn materialize(self) -> AnnotatedToken<'static> {
         todo!()
     }
 }
@@ -174,6 +182,17 @@ trait TokenSource {
     /// Advances the source to the next event.  Returns a reference to an event or an error
     /// if there is some problem with the underlying stream
     fn next(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken>;
+}
+
+// TODO make this more generic with respect to other readers--the problem is Item/Symbol
+// TODO this has to abstract over potentially system reader to implement macros
+
+/// Adapter for a [`TokenSource`] over an arbitrary [`IonReader`]
+struct ReaderTokenSource<R>
+where
+    R: IonReader<Item = StreamItem, Symbol = Symbol>,
+{
+    reader: R,
 }
 
 #[cfg(test)]
