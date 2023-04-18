@@ -138,10 +138,12 @@ impl Display for AtomValue {
 // TODO consider making these thunks memoize to avoid the only once restriction
 
 /// Deferred computation of an atom.
-pub type AtomThunk<'a> = Box<dyn FnMut() -> IonResult<AtomValue> + 'a>;
+pub type AtomThunk<'a> = Box<dyn FnOnce() -> IonResult<AtomValue> + 'a>;
+
+// XXX ideally we'd have our annotations return an borrowing iterator...
 
 /// Deferred computation of annotations.
-pub type AnnotationsThunk<'a> = Box<dyn FnMut() -> IonResult<Annotations> + 'a>;
+pub type AnnotationsThunk<'a> = Box<dyn FnOnce() -> IonResult<Annotations> + 'a>;
 
 /// Represents a token within the stream.
 pub enum Token<'a> {
