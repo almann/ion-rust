@@ -1,11 +1,14 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 
-//! Provides a simple token-like, event stream API over [`IonReader`].
+//! Provides a simple token-like, iterator API over [`IonReader`].
 //!
 //! This is useful for composing and transforming over streams and is used by the macro
-//! system to operate on an Ion stream like a lexer.  It pulls in some of the
-//! [element crate](crate::element) API to make it easier to work with values without
-//! pulling in fully materialized collections.
+//! system to operate on an Ion stream like a lexer.  It is intended to also be useful to compute
+//! the Ion data stream from macro expansion.  Conceptually [`TokenSource`] can be thought of as
+//! a continuation of the computation of an Ion data stream.
+//!
+//! It pulls in parts of the [element crate](crate::element) API to make it easier to work
+//! with values without pulling in fully materializing the tree.
 
 use crate::element::{Annotations, Bytes, Value};
 use crate::result::illegal_operation;
