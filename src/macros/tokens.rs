@@ -3,14 +3,16 @@
 //! Provides a simple token-like, event stream API over [`IonReader`].
 //!
 //! This is useful for composing and transforming over streams and is used by the macro
-//! system to operate on an Ion stream like a lexer.  It pulls in some of the [`crate::element`]
-//! API to make it easier to work with values without pulling in fully materialized collections.
+//! system to operate on an Ion stream like a lexer.  It pulls in some of the
+//! [element crate](crate::element) API to make it easier to work with values without
+//! pulling in fully materialized collections.
 
-use crate::element::{Bytes, Value};
+use crate::element::{Annotations, Bytes, Value};
 use crate::result::illegal_operation;
 use crate::text::text_formatter::IonValueFormatter;
-use crate::{Decimal, Int, IonError, IonType, Str, Symbol, Timestamp};
+use crate::{Decimal, Int, IonError, IonReader, IonResult, IonType, Str, Symbol, Timestamp};
 use std::fmt::{Display, Formatter};
+use std::rc::Rc;
 
 /// Subset of [`IonType`] that are strictly the container types.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -132,17 +134,46 @@ impl Display for AtomValue {
     }
 }
 
+/// Deferred computation of an atom.
+pub type AtomThunk<'a> = Box<dyn FnMut() -> IonResult<AtomValue> + 'a>;
+
 /// Represents a token within the stream.
-#[derive(Debug, PartialEq, Clone)]
-pub enum Token {
-    Atom(AtomValue),
+pub enum Token<'a> {
+    Atom(AtomThunk<'a>),
     StartContainer(ContainerType),
     EndContainer(ContainerType),
     EndStream,
 }
 
-pub struct Event {
-    // TODO implement me!
+/// A token with some set of annotations.
+pub struct AnnotatedToken<'a> {
+    annotations: Rc<Annotations>,
+    token: Token<'a>,
+}
+
+impl<'a> AnnotatedToken<'a> {
+    /// Materializes this event into an event that has no bounds
+    fn materialize(&mut self) -> AnnotatedToken<'static> {
+        todo!()
+    }
+}
+
+/// Instruction for the token stream to advance it to the next event.
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum Instruction {
+    /// Advance to the next event.
+    Next,
+    /// Skip to the end of the current container.
+    /// If within a container, will skip to the end of the container and return that event.
+    /// If not within a container, will skip to the end of the stream.
+    ToEnd,
+}
+
+/// Provides an iterator-like API over Ion data as [`AnnotatedToken`].
+trait TokenSource {
+    /// Advances the source to the next event.  Returns a reference to an event or an error
+    /// if there is some problem with the underlying stream
+    fn next(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken>;
 }
 
 #[cfg(test)]
