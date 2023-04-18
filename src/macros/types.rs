@@ -24,10 +24,11 @@ where
         S: AsRef<str>;
 }
 
-/// Macro types that are encoded without and fixed width.
+/// Macro types that are encoded without a type tag.
+///
 /// These types are structural constrained types over their general Ion equivalent.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum FixedType {
+pub enum TaglessType {
     UInt8,
     UInt16,
     UInt32,
@@ -39,14 +40,18 @@ pub enum FixedType {
     Float16,
     Float32,
     Float64,
+    VarUInt,
+    VarInt,
+    VarStr,
+    VarSym,
 }
 
-impl ParseStr for FixedType {
+impl ParseStr for TaglessType {
     fn parse_str<S>(as_str: S) -> IonResult<Self>
     where
         S: AsRef<str>,
     {
-        use FixedType::*;
+        use TaglessType::*;
         let text = as_str.as_ref();
         match text {
             UINT8 => Ok(UInt8),
@@ -60,14 +65,18 @@ impl ParseStr for FixedType {
             FLOAT16 => Ok(Float16),
             FLOAT32 => Ok(Float32),
             FLOAT64 => Ok(Float64),
-            _ => illegal_operation(format!("'{}' is not a fixed type", text)),
+            VARUINT => Ok(VarUInt),
+            VARINT => Ok(VarInt),
+            VARSTR => Ok(VarStr),
+            VARSYM => Ok(VarSym),
+            _ => illegal_operation(format!("'{}' is not a tagless type", text)),
         }
     }
 }
 
-impl Display for FixedType {
+impl Display for TaglessType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        use FixedType::*;
+        use TaglessType::*;
         write!(
             f,
             "{}",
@@ -83,6 +92,10 @@ impl Display for FixedType {
                 Float16 => FLOAT16,
                 Float32 => FLOAT32,
                 Float64 => FLOAT64,
+                VarUInt => VARUINT,
+                VarInt => VARINT,
+                VarStr => VARSTR,
+                VarSym => VARSYM,
             }
         )
     }
@@ -312,14 +325,12 @@ impl Display for MacroType {
     }
 }
 
-// TODO add tagless if/when we sort out the details
-
 /// Basic value types.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ValueType {
     Union(UnionType),
-    Arbitrary(IonType),
-    Fixed(FixedType),
+    Tagged(IonType),
+    Tagless(TaglessType),
 }
 
 impl Display for ValueType {
@@ -327,8 +338,8 @@ impl Display for ValueType {
         use ValueType::*;
         match self {
             Union(t) => write!(f, "{}", t),
-            Arbitrary(t) => write!(f, "{}", t),
-            Fixed(t) => write!(f, "{}", t),
+            Tagged(t) => write!(f, "{}", t),
+            Tagless(t) => write!(f, "{}", t),
         }
     }
 }
@@ -355,7 +366,7 @@ impl Display for StaticType {
 #[cfg(test)]
 mod tests {
     use super::Cardinality::*;
-    use super::FixedType::*;
+    use super::TaglessType::*;
     use super::UnionType::*;
     use super::*;
     use crate::{IonResult, IonType};
@@ -374,6 +385,10 @@ mod tests {
     #[case::float16("float16", Float16)]
     #[case::float32("float32", Float32)]
     #[case::float64("float64", Float64)]
+    #[case::varuint("varuint", VarUInt)]
+    #[case::varint("varint", VarInt)]
+    #[case::varstr("varstr", VarStr)]
+    #[case::varsym("varsym", VarSym)]
     #[case::any("any", Any)]
     #[case::number("number", Number)]
     #[case::exact("exact", Exact)]
@@ -415,8 +430,8 @@ mod tests {
     #[case::foobar("foobar")]
     #[case::any("any")]
     #[case::float8("float8")]
-    fn test_fixed_type_invalid(#[case] bad_text: &str) {
-        assert_invalid_parse::<_, FixedType>(bad_text)
+    fn test_tagless_type_invalid(#[case] bad_text: &str) {
+        assert_invalid_parse::<_, TaglessType>(bad_text)
     }
 
     #[rstest]
@@ -450,7 +465,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case("() -> int", (ValueType::Arbitrary(IonType::Int), []).into())]
+    #[case("() -> int", (ValueType::Tagged(IonType::Int), []).into())]
     fn test_macro_type_display(
         #[case] expected: &str,
         #[case] macro_type: MacroType,
