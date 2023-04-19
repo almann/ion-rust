@@ -17,7 +17,9 @@ use crate::text::text_formatter::IonValueFormatter;
 use crate::{
     Decimal, Int, IonError, IonReader, IonResult, IonType, Str, StreamItem, Symbol, Timestamp,
 };
+use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
+use std::rc::Rc;
 
 /// Subset of [`IonType`] that are strictly the container types.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -225,15 +227,50 @@ struct ReaderTokenSource<R>
 where
     R: IonReader<Item = StreamItem, Symbol = Symbol>,
 {
-    reader: R,
+    // XXX this is so we can have multiple closures to lazily evaluate tokens
+    reader_cell: Rc<RefCell<R>>,
 }
 
 impl<R> ReaderTokenSource<R>
 where
     R: IonReader<Item = StreamItem, Symbol = Symbol>,
 {
+    #[inline]
     fn annotations_thunk(&self) -> AnnotationsThunk {
-        Thunk::defer(|| self.reader.annotations().collect())
+        let reader_cell = self.reader_cell.clone();
+        Thunk::defer(move || reader_cell.borrow().annotations().collect())
+    }
+
+    // TODO probably worth just hoisting this back into an impl of IonReader
+
+    #[inline]
+    fn next(&mut self) -> IonResult<StreamItem> {
+        let mut reader = self.reader_cell.borrow_mut();
+        reader.next()
+    }
+
+    #[inline]
+    fn field_name(&self) -> IonResult<Symbol> {
+        let reader = self.reader_cell.borrow();
+        reader.field_name()
+    }
+
+    #[inline]
+    fn is_null(&self) -> bool {
+        let reader = self.reader_cell.borrow();
+        reader.is_null()
+    }
+
+    #[inline]
+    fn ion_type(&self) -> Option<IonType> {
+        let reader = self.reader_cell.borrow();
+        reader.ion_type()
+    }
+
+    #[inline]
+    fn parent_type(&self) -> Option<IonType> {
+        let reader = self.reader_cell.borrow();
+        reader.parent_type()
     }
 }
 
@@ -247,15 +284,15 @@ where
 
         Ok(match instruction {
             Next => {
-                let item = self.reader.next()?;
+                let item = self.next()?;
                 match item {
                     StreamItem::Value(ion_type) | StreamItem::Null(ion_type) => {
                         let annotations_thunk = self.annotations_thunk();
-                        let field_name = self.reader.field_name().ok();
-                        let token = if self.reader.is_null() {
+                        let field_name = self.field_name().ok();
+                        let token = if self.is_null() {
                             Null(ion_type).into()
                         } else {
-                            match self.reader.ion_type() {
+                            match self.ion_type() {
                                 None => illegal_operation("No type for value from reader")?,
                                 Some(IonType::Null) => {
                                     illegal_operation("Null type for value from reader")?
@@ -280,7 +317,7 @@ where
                         };
                         AnnotatedToken::new(annotations_thunk, field_name, token)
                     }
-                    StreamItem::Nothing => match self.reader.parent_type() {
+                    StreamItem::Nothing => match self.parent_type() {
                         None => Token::EndStream.into(),
                         Some(IonType::SExp) => Token::EndContainer(ContainerType::SExp).into(),
                         Some(IonType::List) => Token::EndContainer(ContainerType::List).into(),
