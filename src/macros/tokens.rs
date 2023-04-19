@@ -123,25 +123,27 @@ impl Display for AtomValue {
     }
 }
 
+// XXX these lifetimes are because we use Rc<RefCel<...>>, so we own our values
+
 /// Deferred computation of an atom.
-pub type AtomThunk<'a> = Thunk<'a, AtomValue>;
+pub type AtomThunk = Thunk<'static, AtomValue>;
 
 // XXX ideally we'd have our annotations return an borrowing iterator...
 
 /// Deferred computation of annotations.
-pub type AnnotationsThunk<'a> = Thunk<'a, Annotations>;
+pub type AnnotationsThunk = Thunk<'static, Annotations>;
 
 /// Represents a token within the stream.
-pub enum Token<'a> {
-    Atom(AtomThunk<'a>),
+pub enum Token {
+    Atom(AtomThunk),
     StartContainer(ContainerType),
     EndContainer(ContainerType),
     EndStream,
 }
 
-impl<'a> Token<'a> {
+impl Token {
     /// Consume this token to one that owns its content.
-    fn materialize(self) -> IonResult<Token<'static>> {
+    fn materialize(self) -> IonResult<Token> {
         use Token::*;
         Ok(match self {
             Atom(thunk) => Atom(thunk.materialize()?),
@@ -152,31 +154,27 @@ impl<'a> Token<'a> {
     }
 }
 
-impl From<AtomValue> for Token<'static> {
+impl From<AtomValue> for Token {
     fn from(value: AtomValue) -> Self {
         Token::Atom(Thunk::wrap(value))
     }
 }
 
-impl<'a> From<AtomThunk<'a>> for Token<'a> {
-    fn from(thunk: AtomThunk<'a>) -> Self {
+impl From<AtomThunk> for Token {
+    fn from(thunk: AtomThunk) -> Self {
         Token::Atom(thunk)
     }
 }
 
 /// A token with annotations and a field name.
-pub struct AnnotatedToken<'a> {
-    annotations: AnnotationsThunk<'a>,
+pub struct AnnotatedToken {
+    annotations: AnnotationsThunk,
     field_name: Option<Symbol>,
-    token: Token<'a>,
+    token: Token,
 }
 
-impl<'a> AnnotatedToken<'a> {
-    fn new(
-        annotations: AnnotationsThunk<'a>,
-        field_name: Option<Symbol>,
-        token: Token<'a>,
-    ) -> Self {
+impl AnnotatedToken {
+    fn new(annotations: AnnotationsThunk, field_name: Option<Symbol>, token: Token) -> Self {
         Self {
             annotations,
             field_name,
@@ -185,8 +183,8 @@ impl<'a> AnnotatedToken<'a> {
     }
 
     /// Consume this annotated token into one that owns its content.
-    fn materialize(self) -> IonResult<AnnotatedToken<'static>> {
-        Ok(AnnotatedToken::<'static>::new(
+    fn materialize(self) -> IonResult<AnnotatedToken> {
+        Ok(AnnotatedToken::new(
             self.annotations.materialize()?,
             self.field_name,
             self.token.materialize()?,
@@ -194,8 +192,8 @@ impl<'a> AnnotatedToken<'a> {
     }
 }
 
-impl<'a> From<Token<'a>> for AnnotatedToken<'a> {
-    fn from(value: Token<'a>) -> Self {
+impl From<Token> for AnnotatedToken {
+    fn from(value: Token) -> Self {
         AnnotatedToken::new(Thunk::wrap(Annotations::empty()), None, value)
     }
 }
@@ -225,7 +223,7 @@ trait TokenSource {
 /// Adapter for a [`TokenSource`] over an arbitrary [`IonReader`]
 struct ReaderTokenSource<R>
 where
-    R: IonReader<Item = StreamItem, Symbol = Symbol>,
+    R: IonReader<Item = StreamItem, Symbol = Symbol> + 'static,
 {
     // XXX this is so we can have multiple closures to lazily evaluate tokens
     reader_cell: Rc<RefCell<R>>,
@@ -236,12 +234,12 @@ where
     R: IonReader<Item = StreamItem, Symbol = Symbol> + 'static,
 {
     #[inline]
-    fn annotations_thunk(&self) -> AnnotationsThunk<'static> {
+    fn annotations_thunk(&self) -> AnnotationsThunk {
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || reader_cell.borrow().annotations().collect())
     }
 
-    fn bool_token(&mut self) -> Token<'static> {
+    fn bool_token(&mut self) -> Token {
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
