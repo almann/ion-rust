@@ -19,6 +19,7 @@ use crate::{
 };
 use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
+use std::marker::PhantomData;
 use std::rc::Rc;
 
 /// Subset of [`IonType`] that are strictly the container types.
@@ -223,29 +224,28 @@ trait TokenSource {
 // TODO this has to abstract over potentially system reader to implement macros
 
 /// Adapter for a [`TokenSource`] over an arbitrary [`IonReader`]
-struct ReaderTokenSource<R>
+struct ReaderTokenSource<'a, R>
 where
-    R: IonReader<Item = StreamItem, Symbol = Symbol> + 'static,
+    R: IonReader<Item = StreamItem, Symbol = Symbol> + 'a,
 {
     // XXX this is so we can have multiple closures to lazily evaluate tokens
     reader_cell: Rc<RefCell<R>>,
+    // XXX this allows us to explicitly capture a lifetime for the reader we operate on
+    phantom: PhantomData<&'a R>,
 }
 
-impl<R> ReaderTokenSource<R>
+impl<'a, R> ReaderTokenSource<'a, R>
 where
-    R: IonReader<Item = StreamItem, Symbol = Symbol> + 'static,
+    R: IonReader<Item = StreamItem, Symbol = Symbol> + 'a,
 {
-    // XXX these all have static lifetimes because of the Rc<RefCell<...>> as the means to share
-    // XXX the static lifetime of the resulting AnnotationToken is bound to borrow in next()
-
     #[inline]
-    fn annotations_thunk(&self) -> AnnotationsThunk<'static> {
+    fn annotations_thunk(&self) -> AnnotationsThunk<'a> {
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || reader_cell.borrow().annotations().collect())
     }
 
     #[inline]
-    fn bool_token(&mut self) -> Token<'static> {
+    fn bool_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
@@ -255,7 +255,7 @@ where
     }
 
     #[inline]
-    fn int_token(&mut self) -> Token<'static> {
+    fn int_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
@@ -265,7 +265,7 @@ where
     }
 
     #[inline]
-    fn float_token(&mut self) -> Token<'static> {
+    fn float_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
@@ -275,7 +275,7 @@ where
     }
 
     #[inline]
-    fn decimal_token(&mut self) -> Token<'static> {
+    fn decimal_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
@@ -285,7 +285,7 @@ where
     }
 
     #[inline]
-    fn timestamp_token(&mut self) -> Token<'static> {
+    fn timestamp_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
@@ -295,7 +295,7 @@ where
     }
 
     #[inline]
-    fn string_token(&mut self) -> Token<'static> {
+    fn string_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
@@ -305,7 +305,7 @@ where
     }
 
     #[inline]
-    fn symbol_token(&mut self) -> Token<'static> {
+    fn symbol_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
@@ -315,7 +315,7 @@ where
     }
 
     #[inline]
-    fn blob_token(&mut self) -> Token<'static> {
+    fn blob_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
@@ -325,7 +325,7 @@ where
     }
 
     #[inline]
-    fn clob_token(&mut self) -> Token<'static> {
+    fn clob_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
@@ -367,9 +367,9 @@ where
     }
 }
 
-impl<R> TokenSource for ReaderTokenSource<R>
+impl<'a, R> TokenSource for ReaderTokenSource<'a, R>
 where
-    R: IonReader<Item = StreamItem, Symbol = Symbol> + 'static,
+    R: IonReader<Item = StreamItem, Symbol = Symbol> + 'a,
 {
     fn next(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken> {
         use Instruction::*;
