@@ -22,6 +22,8 @@ use std::fmt::{Display, Formatter};
 use std::marker::PhantomData;
 use std::rc::Rc;
 
+pub(crate) mod reader;
+
 /// Subset of [`IonType`] that are strictly the container types.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ContainerType {
@@ -213,7 +215,7 @@ pub enum Instruction {
 }
 
 /// Provides an iterator-like API over Ion data as [`AnnotatedToken`].
-trait TokenSource {
+pub trait TokenSource {
     /// Advances the source to the next token.
     ///
     /// Returns that token or an error if there is some problem with the underlying stream.
