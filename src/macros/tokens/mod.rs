@@ -24,6 +24,77 @@ use std::rc::Rc;
 
 pub(crate) mod reader;
 
+/// Subset of [`IonType`] that are strictly the non-null, non-container types.
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum ScalarType {
+    Bool,
+    Int,
+    Float,
+    Decimal,
+    Timestamp,
+    String,
+    Symbol,
+    Blob,
+    Clob,
+}
+
+impl TryFrom<IonType> for ScalarType {
+    type Error = IonError;
+
+    fn try_from(value: IonType) -> Result<Self, Self::Error> {
+        use ScalarType::*;
+        match value {
+            IonType::Bool => Ok(Bool),
+            IonType::Int => Ok(Int),
+            IonType::Float => Ok(Float),
+            IonType::Decimal => Ok(Decimal),
+            IonType::Timestamp => Ok(Timestamp),
+            IonType::String => Ok(String),
+            IonType::Symbol => Ok(Symbol),
+            IonType::Blob => Ok(Blob),
+            IonType::Clob => Ok(Clob),
+            _ => illegal_operation(format!("{} type is not a scalar", value)),
+        }
+    }
+}
+
+impl Into<IonType> for ScalarType {
+    fn into(self) -> IonType {
+        use ScalarType::*;
+        match self {
+            Bool => IonType::Bool,
+            Int => IonType::Int,
+            Float => IonType::Float,
+            Decimal => IonType::Decimal,
+            Timestamp => IonType::Timestamp,
+            String => IonType::String,
+            Symbol => IonType::Symbol,
+            Blob => IonType::Blob,
+            Clob => IonType::Clob,
+        }
+    }
+}
+
+impl<T> From<T> for ScalarType
+where
+    T: AsRef<ScalarValue>,
+{
+    fn from(value: T) -> Self {
+        use ScalarType::*;
+        match value.as_ref() {
+            ScalarValue::Bool(_) => Bool,
+            ScalarValue::Int(_) => Int,
+            ScalarValue::Float(_) => Float,
+            ScalarValue::Decimal(_) => Decimal,
+            ScalarValue::Timestamp(_) => Timestamp,
+            ScalarValue::String(_) => String,
+            ScalarValue::Symbol(_) => Symbol,
+            ScalarValue::Blob(_) => Blob,
+            ScalarValue::Clob(_) => Clob,
+        }
+    }
+}
+
 /// Subset of [`IonType`] that are strictly the container types.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ContainerType {
@@ -81,6 +152,23 @@ pub enum ScalarValue {
     Clob(Bytes),
 }
 
+impl ScalarValue {
+    /// Returns the [`ScalarType`] of this value.
+    pub fn scalar_type(&self) -> ScalarType {
+        match self {
+            ScalarValue::Bool(_) => ScalarType::Bool,
+            ScalarValue::Int(_) => ScalarType::Int,
+            ScalarValue::Float(_) => ScalarType::Float,
+            ScalarValue::Decimal(_) => ScalarType::Decimal,
+            ScalarValue::Timestamp(_) => ScalarType::Timestamp,
+            ScalarValue::String(_) => ScalarType::String,
+            ScalarValue::Symbol(_) => ScalarType::Symbol,
+            ScalarValue::Blob(_) => ScalarType::Blob,
+            ScalarValue::Clob(_) => ScalarType::Clob,
+        }
+    }
+}
+
 impl TryFrom<Value> for ScalarValue {
     type Error = IonError;
 
@@ -124,13 +212,38 @@ impl Display for ScalarValue {
     }
 }
 
-/// Deferred computation of an atom.
-pub type ScalarThunk<'a> = Thunk<'a, ScalarValue>;
-
 // XXX ideally we'd have our annotations return an borrowing iterator...
-
 /// Deferred computation of annotations.
 pub type AnnotationsThunk<'a> = Thunk<'a, Annotations>;
+
+/// Deferred computation of a field name.
+pub type FieldNameThunk<'a> = Thunk<'a, Option<Symbol>>;
+
+// XXX note that we're "stuttering" on the tag of the union here because we need the type before
+//     we evaluate the data.
+// XXX there is a sharp edge here that the types have to align, so we do not expose it as public
+// TODO consider if it is worth modeling the thunk side value as an untagged union
+/// Deferred computation of a non-null, non-container value.
+pub struct ScalarThunk<'a>(pub(crate) ScalarType, pub(crate) Thunk<'a, ScalarValue>);
+
+impl<'a> ScalarThunk<'a> {
+    /// Evaluates the thunk, consuming it and returning the underlying value.
+    pub fn evaluate(self) -> IonResult<ScalarValue> {
+        self.1.evaluate()
+    }
+
+    /// Evaluates the deferred value and returns it as a thunk.
+    pub fn materialize(self) -> IonResult<ScalarThunk<'static>> {
+        Ok(ScalarThunk(self.0, self.1.materialize()?))
+    }
+
+    /// Convenience to determine if the thunk is materialized.
+    pub fn is_materialized(&self) -> bool {
+        self.1.is_materialized()
+    }
+}
+
+// TODO consider if we should implement Clone for Token/AnnotatedToken (forcing materialization)
 
 /// Represents a token within the stream.
 pub enum Token<'a> {
@@ -143,7 +256,7 @@ pub enum Token<'a> {
 
 impl<'a> Token<'a> {
     /// Consume this token to one that owns its content.
-    fn materialize(self) -> IonResult<Token<'static>> {
+    pub fn materialize(self) -> IonResult<Token<'static>> {
         use Token::*;
         Ok(match self {
             Null(ion_type) => Null(ion_type),
@@ -153,31 +266,75 @@ impl<'a> Token<'a> {
             EndStream => EndStream,
         })
     }
+
+    /// Indicates if this token is a null value and its corresponding type.
+    pub fn null(&self) -> Option<IonType> {
+        match self {
+            Token::Null(ion_type) => Some(*ion_type),
+            _ => None,
+        }
+    }
+
+    /// Indicates if this token is a scalar value (that may be deferred) and the corresponding type.
+    pub fn scalar(&self) -> Option<ScalarType> {
+        todo!()
+    }
+
+    /// Indicates if this token is a start of a container and what type it is.
+    pub fn start_container(&self) -> Option<ContainerType> {
+        match self {
+            Token::StartContainer(container_type) => Some(*container_type),
+            Token::EndContainer(_) => None,
+            _ => None,
+        }
+    }
+
+    /// Indicates if this token is an end of a container and what type it is.
+    pub fn end_container(&self) -> Option<ContainerType> {
+        use Token::*;
+        match self {
+            StartContainer(_) => None,
+            EndContainer(container_type) => Some(*container_type),
+            _ => None,
+        }
+    }
+
+    /// Indicates if this token is the end of a stream.
+    pub fn is_end_stream(&self) -> bool {
+        match self {
+            Token::EndStream => true,
+            _ => false,
+        }
+    }
 }
 
 impl From<ScalarValue> for Token<'static> {
     fn from(value: ScalarValue) -> Self {
-        Token::Scalar(Thunk::wrap(value))
+        let scalar_type = value.scalar_type();
+        let scalar_thunk = ScalarThunk(scalar_type, Thunk::wrap(value));
+        Token::Scalar(scalar_thunk)
     }
 }
 
 impl<'a> From<ScalarThunk<'a>> for Token<'a> {
-    fn from(thunk: ScalarThunk<'a>) -> Self {
-        Token::Scalar(thunk)
+    fn from(scalar_thunk: ScalarThunk<'a>) -> Self {
+        Token::Scalar(scalar_thunk)
     }
 }
 
-/// A token with annotations and a field name.
+/// A token decorated with annotations and a field name (which could be empty or inapplicable).
+///
+/// Tokens must be consumed to "read" them.
 pub struct AnnotatedToken<'a> {
     annotations: AnnotationsThunk<'a>,
-    field_name: Option<Symbol>,
+    field_name: FieldNameThunk<'a>,
     token: Token<'a>,
 }
 
 impl<'a> AnnotatedToken<'a> {
-    fn new(
+    pub fn new(
         annotations: AnnotationsThunk<'a>,
-        field_name: Option<Symbol>,
+        field_name: FieldNameThunk<'a>,
         token: Token<'a>,
     ) -> Self {
         Self {
@@ -187,11 +344,26 @@ impl<'a> AnnotatedToken<'a> {
         }
     }
 
+    /// Destructures this token into its constituent components.
+    ///
+    /// This is generally the API which one would use to "extract" the token.
+    pub fn into_inner(self) -> (AnnotationsThunk<'a>, FieldNameThunk<'a>, Token<'a>) {
+        (self.annotations, self.field_name, self.token)
+    }
+
+    /// Returns a reference of the underlying token for this decorated one.
+    ///
+    /// This is generally used to observe non-destructive information about a token.
+    /// Specifically things like if it is a value/container delimiters/null.
+    pub fn token(&self) -> &Token<'a> {
+        &self.token
+    }
+
     /// Consume this annotated token into one that owns its content.
-    fn materialize(self) -> IonResult<AnnotatedToken<'static>> {
+    pub fn materialize(self) -> IonResult<AnnotatedToken<'static>> {
         Ok(AnnotatedToken::<'static>::new(
             self.annotations.materialize()?,
-            self.field_name,
+            self.field_name.materialize()?,
             self.token.materialize()?,
         ))
     }
@@ -199,7 +371,7 @@ impl<'a> AnnotatedToken<'a> {
 
 impl<'a> From<Token<'a>> for AnnotatedToken<'a> {
     fn from(value: Token<'a>) -> Self {
-        AnnotatedToken::new(Thunk::wrap(Annotations::empty()), None, value)
+        AnnotatedToken::new(Thunk::wrap(Annotations::empty()), Thunk::wrap(None), value)
     }
 }
 
@@ -247,107 +419,139 @@ where
     }
 
     #[inline]
+    fn field_name_thunk(&self) -> FieldNameThunk<'a> {
+        match self.parent_type() {
+            Some(IonType::Struct) => {
+                let reader_cell = self.reader_cell.clone();
+                // XXX note that we expect a field name, so we do want that to surface as error
+                //     and not None
+                Thunk::defer(move || Ok(Some(reader_cell.borrow().field_name()?)))
+            }
+            _ => Thunk::wrap(None),
+        }
+    }
+
+    #[inline]
     fn bool_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
-        Thunk::defer(move || {
-            let mut reader = reader_cell.borrow_mut();
-            Ok(ScalarValue::Bool(reader.read_bool()?))
-        })
+        ScalarThunk(
+            ScalarType::Bool,
+            Thunk::defer(move || {
+                let mut reader = reader_cell.borrow_mut();
+                Ok(ScalarValue::Bool(reader.read_bool()?))
+            }),
+        )
         .into()
     }
 
     #[inline]
     fn int_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
-        Thunk::defer(move || {
-            let mut reader = reader_cell.borrow_mut();
-            Ok(ScalarValue::Int(reader.read_int()?))
-        })
+        ScalarThunk(
+            ScalarType::Int,
+            Thunk::defer(move || {
+                let mut reader = reader_cell.borrow_mut();
+                Ok(ScalarValue::Int(reader.read_int()?))
+            }),
+        )
         .into()
     }
 
     #[inline]
     fn float_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
-        Thunk::defer(move || {
-            let mut reader = reader_cell.borrow_mut();
-            Ok(ScalarValue::Float(reader.read_f64()?))
-        })
+        ScalarThunk(
+            ScalarType::Float,
+            Thunk::defer(move || {
+                let mut reader = reader_cell.borrow_mut();
+                Ok(ScalarValue::Float(reader.read_f64()?))
+            }),
+        )
         .into()
     }
 
     #[inline]
     fn decimal_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
-        Thunk::defer(move || {
-            let mut reader = reader_cell.borrow_mut();
-            Ok(ScalarValue::Decimal(reader.read_decimal()?))
-        })
+        ScalarThunk(
+            ScalarType::Decimal,
+            Thunk::defer(move || {
+                let mut reader = reader_cell.borrow_mut();
+                Ok(ScalarValue::Decimal(reader.read_decimal()?))
+            }),
+        )
         .into()
     }
 
     #[inline]
     fn timestamp_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
-        Thunk::defer(move || {
-            let mut reader = reader_cell.borrow_mut();
-            Ok(ScalarValue::Timestamp(reader.read_timestamp()?))
-        })
+        ScalarThunk(
+            ScalarType::Timestamp,
+            Thunk::defer(move || {
+                let mut reader = reader_cell.borrow_mut();
+                Ok(ScalarValue::Timestamp(reader.read_timestamp()?))
+            }),
+        )
         .into()
     }
 
     #[inline]
     fn string_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
-        Thunk::defer(move || {
-            let mut reader = reader_cell.borrow_mut();
-            Ok(ScalarValue::String(reader.read_string()?))
-        })
+        ScalarThunk(
+            ScalarType::String,
+            Thunk::defer(move || {
+                let mut reader = reader_cell.borrow_mut();
+                Ok(ScalarValue::String(reader.read_string()?))
+            }),
+        )
         .into()
     }
 
     #[inline]
     fn symbol_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
-        Thunk::defer(move || {
-            let mut reader = reader_cell.borrow_mut();
-            Ok(ScalarValue::Symbol(reader.read_symbol()?))
-        })
+        ScalarThunk(
+            ScalarType::Symbol,
+            Thunk::defer(move || {
+                let mut reader = reader_cell.borrow_mut();
+                Ok(ScalarValue::Symbol(reader.read_symbol()?))
+            }),
+        )
         .into()
     }
 
     #[inline]
     fn blob_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
-        Thunk::defer(move || {
-            let mut reader = reader_cell.borrow_mut();
-            Ok(ScalarValue::Blob(reader.read_blob()?.into()))
-        })
+        ScalarThunk(
+            ScalarType::Blob,
+            Thunk::defer(move || {
+                let mut reader = reader_cell.borrow_mut();
+                Ok(ScalarValue::Blob(reader.read_blob()?.into()))
+            }),
+        )
         .into()
     }
 
     #[inline]
     fn clob_token(&mut self) -> Token<'a> {
         let reader_cell = self.reader_cell.clone();
-        Thunk::defer(move || {
-            let mut reader = reader_cell.borrow_mut();
-            Ok(ScalarValue::Clob(reader.read_clob()?.into()))
-        })
+        ScalarThunk(
+            ScalarType::Clob,
+            Thunk::defer(move || {
+                let mut reader = reader_cell.borrow_mut();
+                Ok(ScalarValue::Clob(reader.read_clob()?.into()))
+            }),
+        )
         .into()
     }
-
-    // TODO probably worth just hoisting this back into an impl of IonReader
 
     #[inline]
     fn next(&mut self) -> IonResult<StreamItem> {
         let mut reader = self.reader_cell.borrow_mut();
         reader.next()
-    }
-
-    #[inline]
-    fn field_name(&self) -> IonResult<Symbol> {
-        let reader = self.reader_cell.borrow();
-        reader.field_name()
     }
 
     #[inline]
@@ -382,7 +586,7 @@ where
                 match item {
                     StreamItem::Value(ion_type) | StreamItem::Null(ion_type) => {
                         let annotations_thunk = self.annotations_thunk();
-                        let field_name = self.field_name().ok();
+                        let field_name_thunk = self.field_name_thunk();
                         let token = if self.is_null() {
                             Token::Null(ion_type)
                         } else {
@@ -407,7 +611,7 @@ where
                                 }
                             }
                         };
-                        AnnotatedToken::new(annotations_thunk, field_name, token)
+                        AnnotatedToken::new(annotations_thunk, field_name_thunk, token)
                     }
                     StreamItem::Nothing => match self.parent_type() {
                         None => Token::EndStream.into(),

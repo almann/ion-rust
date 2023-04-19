@@ -2,7 +2,7 @@
 
 use super::TokenSource;
 use crate::element::{Blob, Clob};
-use crate::macros::tokens::{AnnotatedToken, Instruction, Token};
+use crate::macros::tokens::AnnotatedToken;
 use crate::{Decimal, Int, IonReader, IonResult, IonType, Str, StreamItem, Symbol, Timestamp};
 
 /// Adapts any [`TokenSource`] into an [`IonReader`].
@@ -56,16 +56,20 @@ where
     }
 
     fn next(&mut self) -> IonResult<Self::Item> {
-        let annotated_token = self.source.next_token(Instruction::Next)?;
-        let _next_item = match &annotated_token.token {
-            Token::Null(_) => todo!(),
-            Token::Scalar(_) => todo!(),
-            Token::StartContainer(_) => todo!(),
-            Token::EndContainer(_) => todo!(),
-            Token::EndStream => todo!(),
-        };
-        //self.curr_token = Some(annotated_token);
-        //todo!()
+        // if let Some(Token::EndContainer(_)) = &self.curr_token {
+        //     // if we're positioned on the end of the container we return nothing until step out
+        //     return Ok(StreamItem::Nothing);
+        // }
+        // let annotated_token = self.source.next_token(Instruction::Next)?;
+        // let _next_item = match &annotated_token.token {
+        //     Token::Null(ion_type) => StreamItem::Null(*ion_type),
+        //     Token::Scalar(_) => todo!(),
+        //     Token::StartContainer(container_type) => StreamItem::Value(container_type.into()),
+        //     Token::EndContainer(_) => StreamItem::Nothing,
+        //     Token::EndStream => StreamItem::Nothing,
+        // };
+        // self.curr_token = Some(annotated_token);
+        todo!()
     }
 
     fn current(&self) -> Self::Item {
