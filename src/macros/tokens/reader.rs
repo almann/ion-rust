@@ -16,7 +16,7 @@ where
     source: T,
     depth: usize,
 
-    // TODO determine if this is correct
+    // FIXME this is not right
     // XXX really we have a problem between the lifetime of next() and the other APIs for the token
     // XXX not sure if materialization is the right option or re-thinking how to manage the lifetime
     //     since we're already using a Rc<RefCell<...>> under the hood
