@@ -668,15 +668,15 @@ mod tests {
     #[case::cont_sexp(SExp, IonType::SExp)]
     #[case::cont_list(List, IonType::List)]
     #[case::cont_struct(Struct, IonType::Struct)]
-    #[case::atom_bool(Bool(false), Value::Bool(false))]
-    #[case::atom_int(Int(3.into()), Value::Int(3.into()))]
-    #[case::atom_float(Float(1.1), Value::Float(1.1))]
-    #[case::atom_decimal(Decimal(42.into()), Value::Decimal(42.into()))]
-    #[case::atom_timestamp(Timestamp(sample_timestamp()), Value::Timestamp(sample_timestamp()))]
-    #[case::atom_symbol(Symbol("foo".into()), Value::Symbol("foo".into()))]
-    #[case::atom_string(String("bar".into()), Value::String("bar".into()))]
-    #[case::atom_clob(Clob("hello".into()), Value::Clob("hello".into()))]
-    #[case::atom_blob(Blob("world".into()), Value::Blob("world".into()))]
+    #[case::scalar_bool(Bool(false), Value::Bool(false))]
+    #[case::scalar_int(Int(3.into()), Value::Int(3.into()))]
+    #[case::scalar_float(Float(1.1), Value::Float(1.1))]
+    #[case::scalar_decimal(Decimal(42.into()), Value::Decimal(42.into()))]
+    #[case::scalar_timestamp(Timestamp(sample_timestamp()), Value::Timestamp(sample_timestamp()))]
+    #[case::scalar_symbol(Symbol("foo".into()), Value::Symbol("foo".into()))]
+    #[case::scalar_string(String("bar".into()), Value::String("bar".into()))]
+    #[case::scalar_clob(Clob("hello".into()), Value::Clob("hello".into()))]
+    #[case::scalar_blob(Blob("world".into()), Value::Blob("world".into()))]
     fn test_valid_conversion<F, T>(#[case] expected: T, #[case] from: F) -> IonResult<()>
     where
         T: TryFrom<F, Error = IonError> + Into<F> + PartialEq + Debug + Display,
@@ -722,12 +722,13 @@ mod tests {
         crate::element::Struct::builder().build()
     }
 
+    // XXX note that struct is spelled strct to avoid keyword clash
     #[rstest]
     #[case::null(Value::Null(IonType::Null))]
     #[case::sexp(Value::SExp(vec![].into()))]
     #[case::list(Value::List(vec![].into()))]
     #[case::strct(Value::Struct(empty_struct()))]
-    fn test_invalid_atom_conversion(#[case] bad_value: Value) {
+    fn test_invalid_scalar_conversion(#[case] bad_value: Value) {
         test_invalid_conversion::<_, ScalarValue>(bad_value)
     }
 }
