@@ -233,12 +233,21 @@ where
 
 impl<R> ReaderTokenSource<R>
 where
-    R: IonReader<Item = StreamItem, Symbol = Symbol>,
+    R: IonReader<Item = StreamItem, Symbol = Symbol> + 'static,
 {
     #[inline]
-    fn annotations_thunk(&self) -> AnnotationsThunk {
+    fn annotations_thunk(&self) -> AnnotationsThunk<'static> {
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || reader_cell.borrow().annotations().collect())
+    }
+
+    fn bool_token(&mut self) -> Token<'static> {
+        let reader_cell = self.reader_cell.clone();
+        Thunk::defer(move || {
+            let mut reader = reader_cell.borrow_mut();
+            Ok(AtomValue::Bool(reader.read_bool()?))
+        })
+        .into()
     }
 
     // TODO probably worth just hoisting this back into an impl of IonReader
@@ -276,10 +285,9 @@ where
 
 impl<R> TokenSource for ReaderTokenSource<R>
 where
-    R: IonReader<Item = StreamItem, Symbol = Symbol>,
+    R: IonReader<Item = StreamItem, Symbol = Symbol> + 'static,
 {
     fn next(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken> {
-        use AtomValue::*;
         use Instruction::*;
 
         Ok(match instruction {
@@ -290,18 +298,14 @@ where
                         let annotations_thunk = self.annotations_thunk();
                         let field_name = self.field_name().ok();
                         let token = if self.is_null() {
-                            Null(ion_type).into()
+                            AtomValue::Null(ion_type).into()
                         } else {
                             match self.ion_type() {
                                 None => illegal_operation("No type for value from reader")?,
                                 Some(IonType::Null) => {
                                     illegal_operation("Null type for value from reader")?
                                 }
-                                Some(IonType::Bool) => {
-                                    todo!()
-                                    //FIXME the following is broken because we need more than one closure
-                                    //Thunk::defer(|| Ok(Bool(self.reader.read_bool()?))).into()
-                                }
+                                Some(IonType::Bool) => self.bool_token(),
                                 Some(IonType::Int) => todo!(),
                                 Some(IonType::Float) => todo!(),
                                 Some(IonType::Decimal) => todo!(),
