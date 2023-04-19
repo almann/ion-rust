@@ -2,13 +2,14 @@
 
 use super::TokenSource;
 use crate::element::{Blob, Clob};
-use crate::macros::tokens::AnnotatedToken;
+use crate::macros::tokens::{AnnotatedToken, Instruction, Token};
 use crate::{Decimal, Int, IonReader, IonResult, IonType, Str, StreamItem, Symbol, Timestamp};
 
 /// Adapts any [`TokenSource`] into an [`IonReader`].
 ///
 /// It is important to note that adapting a source in the middle of a container stream
-/// will treat it as top-level and only surface what it knows about
+/// will treat it as top-level and only surface what it can see at that level.  It will not
+/// step out of the container.
 pub struct TokenSourceReader<T>
 where
     T: TokenSource,
@@ -55,7 +56,16 @@ where
     }
 
     fn next(&mut self) -> IonResult<Self::Item> {
-        todo!()
+        let annotated_token = self.source.next_token(Instruction::Next)?;
+        let _next_item = match &annotated_token.token {
+            Token::Null(_) => todo!(),
+            Token::Scalar(_) => todo!(),
+            Token::StartContainer(_) => todo!(),
+            Token::EndContainer(_) => todo!(),
+            Token::EndStream => todo!(),
+        };
+        //self.curr_token = Some(annotated_token);
+        //todo!()
     }
 
     fn current(&self) -> Self::Item {

@@ -67,10 +67,9 @@ impl Display for ContainerType {
 // XXX not really happy about the copy/paste/delete for this...
 //     If Value was factored as scalar/collection that would've been nice
 
-/// Subset of [`Value`] that is restricted to non-container types.
+/// Subset of [`Value`] that is restricted to non-container, non-null types.
 #[derive(Debug, Clone, PartialEq)]
-pub enum AtomValue {
-    Null(IonType),
+pub enum ScalarValue {
     Bool(bool),
     Int(Int),
     Float(f64),
@@ -82,13 +81,13 @@ pub enum AtomValue {
     Clob(Bytes),
 }
 
-impl TryFrom<Value> for AtomValue {
+impl TryFrom<Value> for ScalarValue {
     type Error = IonError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
-        use AtomValue::*;
+        use ScalarValue::*;
         match value {
-            Value::Null(ion_type) => Ok(Null(ion_type)),
+            Value::Null(_) => illegal_operation("Null is not a scalar value"),
             Value::Bool(bool) => Ok(Bool(bool)),
             Value::Int(int) => Ok(Int(int)),
             Value::Float(float) => Ok(Float(float)),
@@ -98,19 +97,18 @@ impl TryFrom<Value> for AtomValue {
             Value::Symbol(symbol) => Ok(Symbol(symbol)),
             Value::Blob(bytes) => Ok(Blob(bytes)),
             Value::Clob(bytes) => Ok(Clob(bytes)),
-            Value::SExp(_) => illegal_operation("SExp is not an atom value"),
-            Value::List(_) => illegal_operation("List is not an atom value"),
-            Value::Struct(_) => illegal_operation("Struct is not an atom value"),
+            Value::SExp(_) => illegal_operation("SExp is not a scalar value"),
+            Value::List(_) => illegal_operation("List is not a scalar value"),
+            Value::Struct(_) => illegal_operation("Struct is not a scalar value"),
         }
     }
 }
 
-impl Display for AtomValue {
+impl Display for ScalarValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        use AtomValue::*;
+        use ScalarValue::*;
         let mut ivf = IonValueFormatter { output: f };
         match self {
-            Null(ion_type) => ivf.format_null(*ion_type),
             Bool(bool) => ivf.format_bool(*bool),
             Int(int) => ivf.format_integer(int),
             Float(float) => ivf.format_float(*float),
@@ -127,7 +125,7 @@ impl Display for AtomValue {
 }
 
 /// Deferred computation of an atom.
-pub type AtomThunk<'a> = Thunk<'a, AtomValue>;
+pub type ScalarThunk<'a> = Thunk<'a, ScalarValue>;
 
 // XXX ideally we'd have our annotations return an borrowing iterator...
 
@@ -136,7 +134,8 @@ pub type AnnotationsThunk<'a> = Thunk<'a, Annotations>;
 
 /// Represents a token within the stream.
 pub enum Token<'a> {
-    Atom(AtomThunk<'a>),
+    Null(IonType),
+    Scalar(ScalarThunk<'a>),
     StartContainer(ContainerType),
     EndContainer(ContainerType),
     EndStream,
@@ -147,7 +146,8 @@ impl<'a> Token<'a> {
     fn materialize(self) -> IonResult<Token<'static>> {
         use Token::*;
         Ok(match self {
-            Atom(thunk) => Atom(thunk.materialize()?),
+            Null(ion_type) => Null(ion_type),
+            Scalar(thunk) => Scalar(thunk.materialize()?),
             StartContainer(container_type) => StartContainer(container_type),
             EndContainer(container_type) => EndContainer(container_type),
             EndStream => EndStream,
@@ -155,15 +155,15 @@ impl<'a> Token<'a> {
     }
 }
 
-impl From<AtomValue> for Token<'static> {
-    fn from(value: AtomValue) -> Self {
-        Token::Atom(Thunk::wrap(value))
+impl From<ScalarValue> for Token<'static> {
+    fn from(value: ScalarValue) -> Self {
+        Token::Scalar(Thunk::wrap(value))
     }
 }
 
-impl<'a> From<AtomThunk<'a>> for Token<'a> {
-    fn from(thunk: AtomThunk<'a>) -> Self {
-        Token::Atom(thunk)
+impl<'a> From<ScalarThunk<'a>> for Token<'a> {
+    fn from(thunk: ScalarThunk<'a>) -> Self {
+        Token::Scalar(thunk)
     }
 }
 
@@ -251,7 +251,7 @@ where
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
-            Ok(AtomValue::Bool(reader.read_bool()?))
+            Ok(ScalarValue::Bool(reader.read_bool()?))
         })
         .into()
     }
@@ -261,7 +261,7 @@ where
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
-            Ok(AtomValue::Int(reader.read_int()?))
+            Ok(ScalarValue::Int(reader.read_int()?))
         })
         .into()
     }
@@ -271,7 +271,7 @@ where
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
-            Ok(AtomValue::Float(reader.read_f64()?))
+            Ok(ScalarValue::Float(reader.read_f64()?))
         })
         .into()
     }
@@ -281,7 +281,7 @@ where
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
-            Ok(AtomValue::Decimal(reader.read_decimal()?))
+            Ok(ScalarValue::Decimal(reader.read_decimal()?))
         })
         .into()
     }
@@ -291,7 +291,7 @@ where
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
-            Ok(AtomValue::Timestamp(reader.read_timestamp()?))
+            Ok(ScalarValue::Timestamp(reader.read_timestamp()?))
         })
         .into()
     }
@@ -301,7 +301,7 @@ where
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
-            Ok(AtomValue::String(reader.read_string()?))
+            Ok(ScalarValue::String(reader.read_string()?))
         })
         .into()
     }
@@ -311,7 +311,7 @@ where
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
-            Ok(AtomValue::Symbol(reader.read_symbol()?))
+            Ok(ScalarValue::Symbol(reader.read_symbol()?))
         })
         .into()
     }
@@ -321,7 +321,7 @@ where
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
-            Ok(AtomValue::Blob(reader.read_blob()?.into()))
+            Ok(ScalarValue::Blob(reader.read_blob()?.into()))
         })
         .into()
     }
@@ -331,7 +331,7 @@ where
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
-            Ok(AtomValue::Clob(reader.read_clob()?.into()))
+            Ok(ScalarValue::Clob(reader.read_clob()?.into()))
         })
         .into()
     }
@@ -384,7 +384,7 @@ where
                         let annotations_thunk = self.annotations_thunk();
                         let field_name = self.field_name().ok();
                         let token = if self.is_null() {
-                            AtomValue::Null(ion_type).into()
+                            Token::Null(ion_type)
                         } else {
                             match self.ion_type() {
                                 None => illegal_operation("No type for value from reader")?,
@@ -448,8 +448,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::AtomValue::*;
     use super::ContainerType::*;
+    use super::ScalarValue::*;
     use super::*;
     use crate::{IonError, IonResult, IonType};
     use rstest::rstest;
@@ -464,7 +464,6 @@ mod tests {
     #[case::cont_sexp(SExp, IonType::SExp)]
     #[case::cont_list(List, IonType::List)]
     #[case::cont_struct(Struct, IonType::Struct)]
-    #[case::atom_null(Null(IonType::Null), Value::Null(IonType::Null))]
     #[case::atom_bool(Bool(false), Value::Bool(false))]
     #[case::atom_int(Int(3.into()), Value::Int(3.into()))]
     #[case::atom_float(Float(1.1), Value::Float(1.1))]
@@ -520,10 +519,11 @@ mod tests {
     }
 
     #[rstest]
+    #[case::null(Value::Null(IonType::Null))]
     #[case::sexp(Value::SExp(vec![].into()))]
     #[case::list(Value::List(vec![].into()))]
     #[case::strct(Value::Struct(empty_struct()))]
     fn test_invalid_atom_conversion(#[case] bad_value: Value) {
-        test_invalid_conversion::<_, AtomValue>(bad_value)
+        test_invalid_conversion::<_, ScalarValue>(bad_value)
     }
 }

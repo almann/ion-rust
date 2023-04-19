@@ -38,7 +38,7 @@ pub use self::bytes::Bytes;
 pub use annotations::Annotations;
 pub use lob::{Blob, Clob};
 
-use crate::macros::tokens::AtomValue;
+use crate::macros::tokens::ScalarValue;
 pub use list::List;
 pub use r#struct::Struct;
 pub use sequence::Sequence;
@@ -219,19 +219,18 @@ impl From<Struct> for Value {
     }
 }
 
-impl From<AtomValue> for Value {
-    fn from(value: AtomValue) -> Self {
+impl From<ScalarValue> for Value {
+    fn from(value: ScalarValue) -> Self {
         match value {
-            AtomValue::Null(ion_type) => Value::Null(ion_type),
-            AtomValue::Bool(bool) => Value::Bool(bool),
-            AtomValue::Int(int) => Value::Int(int),
-            AtomValue::Float(float) => Value::Float(float),
-            AtomValue::Decimal(decimal) => Value::Decimal(decimal),
-            AtomValue::Timestamp(timestamp) => Value::Timestamp(timestamp),
-            AtomValue::String(text) => Value::String(text),
-            AtomValue::Symbol(symbol) => Value::Symbol(symbol),
-            AtomValue::Blob(bytes) => Value::Blob(bytes),
-            AtomValue::Clob(bytes) => Value::Clob(bytes),
+            ScalarValue::Bool(bool) => Value::Bool(bool),
+            ScalarValue::Int(int) => Value::Int(int),
+            ScalarValue::Float(float) => Value::Float(float),
+            ScalarValue::Decimal(decimal) => Value::Decimal(decimal),
+            ScalarValue::Timestamp(timestamp) => Value::Timestamp(timestamp),
+            ScalarValue::String(text) => Value::String(text),
+            ScalarValue::Symbol(symbol) => Value::Symbol(symbol),
+            ScalarValue::Blob(bytes) => Value::Blob(bytes),
+            ScalarValue::Clob(bytes) => Value::Clob(bytes),
         }
     }
 }
