@@ -235,17 +235,101 @@ impl<R> ReaderTokenSource<R>
 where
     R: IonReader<Item = StreamItem, Symbol = Symbol> + 'static,
 {
+    // XXX these all have static lifetimes because of the Rc<RefCell<...>> as the means to share
+    // XXX the static lifetime of the resulting AnnotationToken is bound to borrow in next()
+
     #[inline]
     fn annotations_thunk(&self) -> AnnotationsThunk<'static> {
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || reader_cell.borrow().annotations().collect())
     }
 
+    #[inline]
     fn bool_token(&mut self) -> Token<'static> {
         let reader_cell = self.reader_cell.clone();
         Thunk::defer(move || {
             let mut reader = reader_cell.borrow_mut();
             Ok(AtomValue::Bool(reader.read_bool()?))
+        })
+        .into()
+    }
+
+    #[inline]
+    fn int_token(&mut self) -> Token<'static> {
+        let reader_cell = self.reader_cell.clone();
+        Thunk::defer(move || {
+            let mut reader = reader_cell.borrow_mut();
+            Ok(AtomValue::Int(reader.read_int()?))
+        })
+        .into()
+    }
+
+    #[inline]
+    fn float_token(&mut self) -> Token<'static> {
+        let reader_cell = self.reader_cell.clone();
+        Thunk::defer(move || {
+            let mut reader = reader_cell.borrow_mut();
+            Ok(AtomValue::Float(reader.read_f64()?))
+        })
+        .into()
+    }
+
+    #[inline]
+    fn decimal_token(&mut self) -> Token<'static> {
+        let reader_cell = self.reader_cell.clone();
+        Thunk::defer(move || {
+            let mut reader = reader_cell.borrow_mut();
+            Ok(AtomValue::Decimal(reader.read_decimal()?))
+        })
+        .into()
+    }
+
+    #[inline]
+    fn timestamp_token(&mut self) -> Token<'static> {
+        let reader_cell = self.reader_cell.clone();
+        Thunk::defer(move || {
+            let mut reader = reader_cell.borrow_mut();
+            Ok(AtomValue::Timestamp(reader.read_timestamp()?))
+        })
+        .into()
+    }
+
+    #[inline]
+    fn string_token(&mut self) -> Token<'static> {
+        let reader_cell = self.reader_cell.clone();
+        Thunk::defer(move || {
+            let mut reader = reader_cell.borrow_mut();
+            Ok(AtomValue::String(reader.read_string()?))
+        })
+        .into()
+    }
+
+    #[inline]
+    fn symbol_token(&mut self) -> Token<'static> {
+        let reader_cell = self.reader_cell.clone();
+        Thunk::defer(move || {
+            let mut reader = reader_cell.borrow_mut();
+            Ok(AtomValue::Symbol(reader.read_symbol()?))
+        })
+        .into()
+    }
+
+    #[inline]
+    fn blob_token(&mut self) -> Token<'static> {
+        let reader_cell = self.reader_cell.clone();
+        Thunk::defer(move || {
+            let mut reader = reader_cell.borrow_mut();
+            Ok(AtomValue::Blob(reader.read_blob()?.into()))
+        })
+        .into()
+    }
+
+    #[inline]
+    fn clob_token(&mut self) -> Token<'static> {
+        let reader_cell = self.reader_cell.clone();
+        Thunk::defer(move || {
+            let mut reader = reader_cell.borrow_mut();
+            Ok(AtomValue::Clob(reader.read_clob()?.into()))
         })
         .into()
     }
@@ -306,17 +390,19 @@ where
                                     illegal_operation("Null type for value from reader")?
                                 }
                                 Some(IonType::Bool) => self.bool_token(),
-                                Some(IonType::Int) => todo!(),
-                                Some(IonType::Float) => todo!(),
-                                Some(IonType::Decimal) => todo!(),
-                                Some(IonType::Timestamp) => todo!(),
-                                Some(IonType::Symbol) => todo!(),
-                                Some(IonType::String) => todo!(),
-                                Some(IonType::Clob) => todo!(),
-                                Some(IonType::Blob) => todo!(),
-                                Some(IonType::List) => todo!(),
-                                Some(IonType::SExp) => todo!(),
-                                Some(IonType::Struct) => todo!(),
+                                Some(IonType::Int) => self.int_token(),
+                                Some(IonType::Float) => self.float_token(),
+                                Some(IonType::Decimal) => self.decimal_token(),
+                                Some(IonType::Timestamp) => self.timestamp_token(),
+                                Some(IonType::Symbol) => self.symbol_token(),
+                                Some(IonType::String) => self.string_token(),
+                                Some(IonType::Clob) => self.clob_token(),
+                                Some(IonType::Blob) => self.blob_token(),
+                                Some(IonType::List) => Token::StartContainer(ContainerType::List),
+                                Some(IonType::SExp) => Token::StartContainer(ContainerType::SExp),
+                                Some(IonType::Struct) => {
+                                    Token::StartContainer(ContainerType::Struct)
+                                }
                             }
                         };
                         AnnotatedToken::new(annotations_thunk, field_name, token)
