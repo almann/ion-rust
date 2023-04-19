@@ -217,7 +217,7 @@ trait TokenSource {
     /// Advances the source to the next token.
     ///
     /// Returns that token or an error if there is some problem with the underlying stream.
-    fn next(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken>;
+    fn next_token(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken>;
 }
 
 // TODO make this more generic with respect to other readers--the problem is Item/Symbol
@@ -371,7 +371,7 @@ impl<'a, R> TokenSource for ReaderTokenSource<'a, R>
 where
     R: IonReader<Item = StreamItem, Symbol = Symbol> + 'a,
 {
-    fn next(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken> {
+    fn next_token(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken> {
         use Instruction::*;
 
         Ok(match instruction {
@@ -419,7 +419,15 @@ where
                     },
                 }
             }
-            NextEnd => todo!(),
+            NextEnd => match self.parent_type() {
+                None => illegal_operation("Cannot skip to next end at top-level")?,
+                Some(ion_type) => match ion_type {
+                    IonType::List => todo!(),
+                    IonType::SExp => todo!(),
+                    IonType::Struct => todo!(),
+                    _ => illegal_operation(format!("Unexpected container type: {}", ion_type))?,
+                },
+            },
         })
     }
 }
