@@ -424,6 +424,18 @@ where
     }
 }
 
+impl<'a, R> From<R> for ReaderTokenSource<'a, R>
+where
+    R: IonReader<Item = StreamItem, Symbol = Symbol> + 'a,
+{
+    fn from(value: R) -> Self {
+        ReaderTokenSource {
+            reader_cell: Rc::new(RefCell::new(value)),
+            phantom: Default::default(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::AtomValue::*;
