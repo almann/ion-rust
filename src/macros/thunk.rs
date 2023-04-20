@@ -76,14 +76,7 @@ impl<'a, T> Thunk<'a, T> {
     /// An error state can be thought of as a deferred value that will never happen.
     pub fn memoize(&mut self) -> IonResult<&T> {
         use ThunkVal::*;
-        // move out the current value
-        let thunk_res = std::mem::replace(&mut self.0, illegal_operation("Empty thunk"));
-        // attempt to evaluate (if possible/needed)
-        let value_res = match thunk_res {
-            Ok(Deferred(func)) => func(),
-            Ok(Materialized(val)) => Ok(val),
-            Err(e) => Err(e),
-        };
+        let value_res = self.remove();
         // move in the new, materialized value
         match value_res {
             Ok(val) => self.0 = Ok(Materialized(val)),
@@ -99,6 +92,32 @@ impl<'a, T> Thunk<'a, T> {
             Ok(Materialized(val_ref)) => Ok(val_ref),
             Err(e) => Err(e.clone()),
         }
+    }
+
+    /// Evaluates and removes the current value replacing it with an [**Error**](ThunkState::Error).
+    /// state.
+    pub fn remove(&mut self) -> IonResult<T> {
+        use ThunkVal::*;
+        // move out the current value
+        let thunk_res = std::mem::replace(&mut self.0, illegal_operation("Empty thunk"));
+        // attempt to evaluate (if possible/needed)
+        let value_res = match thunk_res {
+            Ok(Deferred(func)) => func(),
+            Ok(Materialized(val)) => Ok(val),
+            Err(e) => Err(e),
+        };
+        return value_res;
+    }
+
+    /// Evaluates and sets the current value with the given one, returning the
+    /// result of evaluation that was previously in the thunk.
+    ///
+    /// This will make the thunk in an [**Materialized**](ThunkState::Materialized) state.
+    pub fn replace(&mut self, value: T) -> IonResult<T> {
+        let old_res = self.remove();
+        // move in the new, materialized value
+        self.0 = Ok(ThunkVal::Materialized(value));
+        old_res
     }
 
     /// Returns the current status of the thunk.

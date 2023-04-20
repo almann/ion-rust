@@ -3,7 +3,9 @@
 use super::TokenSource;
 use crate::element::{Blob, Clob};
 use crate::macros::tokens::{AnnotatedToken, Instruction, Token};
+use crate::result::illegal_operation;
 use crate::{Decimal, Int, IonReader, IonResult, IonType, Str, StreamItem, Symbol, Timestamp};
+use std::cell::RefCell;
 
 /// Adapts any [`TokenSource`] into an [`IonReader`].
 ///
@@ -21,11 +23,12 @@ where
     // XXX really we have a problem between the lifetime of next() and the other APIs for the token
     // XXX not sure if materialization is the right option or re-thinking how to manage the lifetime
     //     since we're already using a Rc<RefCell<...>> under the hood
+    // XXX this is a RefCell<AnnotationToken> because we need interior mutability for memoization
     /// the current token
-    curr_token: Option<AnnotatedToken<'static>>,
+    curr_token_cell: Option<RefCell<AnnotatedToken<'static>>>,
 
     /// remember the current read item
-    curr_item: Option<StreamItem>,
+    curr_item: StreamItem,
 }
 
 impl<T> From<T> for TokenSourceReader<T>
@@ -36,8 +39,8 @@ where
         TokenSourceReader {
             source,
             depth: 0,
-            curr_token: None,
-            curr_item: None,
+            curr_token_cell: None,
+            curr_item: StreamItem::Nothing,
         }
     }
 }
@@ -56,7 +59,8 @@ where
     }
 
     fn next(&mut self) -> IonResult<Self::Item> {
-        if let Some(annotated_token) = self.curr_token.as_ref() {
+        if let Some(token_cell) = &self.curr_token_cell {
+            let annotated_token = token_cell.borrow();
             if let Token::EndContainer(_) = annotated_token.token() {
                 // if we're positioned on the end of the container we return nothing until step out
                 return Ok(StreamItem::Nothing);
@@ -71,17 +75,32 @@ where
             Token::EndContainer(_) => StreamItem::Nothing,
             Token::EndStream => StreamItem::Nothing,
         };
-        self.curr_item = Some(item);
-        self.curr_token = Some(annotated_token);
+        self.curr_item = item;
+        self.curr_token_cell = Some(RefCell::new(annotated_token));
         Ok(item)
     }
 
     fn current(&self) -> Self::Item {
-        todo!()
+        self.curr_item
     }
 
     fn ion_type(&self) -> Option<IonType> {
-        todo!()
+        match &self.curr_token_cell {
+            None => None,
+            Some(token_cell) => {
+                let annotated_token = token_cell.borrow();
+                match annotated_token.token() {
+                    Token::Null(ion_type) => Some(*ion_type),
+                    Token::Scalar(thunk) => Some(thunk.scalar_type().into()),
+                    Token::StartContainer(container_type) => Some((*container_type).into()),
+                    Token::EndContainer(_) => {
+                        // the end of a container is considered not positioned
+                        None
+                    }
+                    Token::EndStream => None,
+                }
+            }
+        }
     }
 
     fn annotations<'a>(&'a self) -> Box<dyn Iterator<Item = IonResult<Self::Symbol>> + 'a> {
@@ -89,7 +108,13 @@ where
     }
 
     fn field_name(&self) -> IonResult<Self::Symbol> {
-        todo!()
+        match &self.curr_token_cell {
+            None => illegal_operation("No field name"),
+            Some(token_cell) => {
+                let mut annotated_token = token_cell.borrow_mut();
+                annotated_token.share_field_name()
+            }
+        }
     }
 
     fn is_null(&self) -> bool {

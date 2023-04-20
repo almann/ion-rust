@@ -217,7 +217,7 @@ impl Display for ScalarValue {
 pub type AnnotationsThunk<'a> = Thunk<'a, Annotations>;
 
 /// Deferred computation of a field name.
-pub type FieldNameThunk<'a> = Thunk<'a, Option<Symbol>>;
+pub type FieldNameThunk<'a> = Thunk<'a, Symbol>;
 
 // XXX note that we're "stuttering" on the tag of the union here because we need the type before
 //     we evaluate the data.
@@ -375,11 +375,27 @@ impl<'a> AnnotatedToken<'a> {
             self.token.materialize()?,
         ))
     }
+
+    /// Materializes in place the field name and make it shared.
+    pub fn share_field_name(&mut self) -> IonResult<Symbol> {
+        match self.field_name.remove() {
+            Ok(symbol) => {
+                let new_symbol = symbol.into_shared();
+                let _ = self.field_name.replace(new_symbol.clone());
+                Ok(new_symbol)
+            }
+            Err(e) => Err(e),
+        }
+    }
 }
 
 impl<'a> From<Token<'a>> for AnnotatedToken<'a> {
     fn from(value: Token<'a>) -> Self {
-        AnnotatedToken::new(Thunk::wrap(Annotations::empty()), Thunk::wrap(None), value)
+        AnnotatedToken::new(
+            Thunk::wrap(Annotations::empty()),
+            Thunk::defer(|| illegal_operation("No field name")),
+            value,
+        )
     }
 }
 
@@ -433,9 +449,9 @@ where
                 let reader_cell = self.reader_cell.clone();
                 // XXX note that we expect a field name, so we do want that to surface as error
                 //     and not None
-                Thunk::defer(move || Ok(Some(reader_cell.borrow().field_name()?)))
+                Thunk::defer(move || Ok(reader_cell.borrow().field_name()?))
             }
-            _ => Thunk::wrap(None),
+            _ => Thunk::defer(|| illegal_operation("No field name")),
         }
     }
 
