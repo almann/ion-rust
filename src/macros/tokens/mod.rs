@@ -831,6 +831,14 @@ mod tests {
         Ok(vec![(Next, scalar_value.into())])
     }
 
+    fn container_src(container_type: ContainerType, contents: IonResult<Srcs>) -> IonResult<Srcs> {
+        let mut srcs = vec![];
+        srcs.push((Next, Token::StartContainer(container_type).into()));
+        srcs.append(&mut contents?);
+        srcs.push((Next, Token::EndContainer(container_type).into()));
+        Ok(srcs)
+    }
+
     fn field_named_srcs<C, I, S>(names: C, srcs: IonResult<Srcs>) -> IonResult<Srcs>
     where
         C: IntoIterator<Item = S, IntoIter = I>,
@@ -946,13 +954,5 @@ mod tests {
         }
         assert_eq!(expected_count, actual_count);
         Ok(())
-    }
-
-    fn container_src(container_type: ContainerType, contents: IonResult<Srcs>) -> IonResult<Srcs> {
-        let mut srcs = vec![];
-        srcs.push((Next, Token::StartContainer(container_type).into()));
-        srcs.append(&mut contents?);
-        srcs.push((Next, Token::EndContainer(container_type).into()));
-        Ok(srcs)
     }
 }
