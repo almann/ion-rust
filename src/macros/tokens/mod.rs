@@ -870,10 +870,7 @@ mod tests {
     }
 
     fn singleton_struct_src() -> IonResult<Srcs> {
-        container_src(
-            ContainerType::Struct,
-            field_named_srcs(["a"], single_src(5)),
-        )
+        container_src(Struct, field_named_srcs(["a"], single_src(5)))
     }
 
     #[rstest]
