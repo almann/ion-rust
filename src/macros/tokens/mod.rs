@@ -849,6 +849,26 @@ mod tests {
             .collect()
     }
 
+    fn annotate_first_srcs<C, I, S>(annotations: C, srcs_res: IonResult<Srcs>) -> IonResult<Srcs>
+    where
+        C: IntoIterator<Item = S, IntoIter = I>,
+        I: Iterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut srcs = srcs_res?;
+        if srcs.len() == 0 {
+            return illegal_operation("Cannot annotated empty");
+        }
+
+        // not exactly efficient, but that's fine here
+        let (instruction, mut annotated_token) = srcs.remove(0);
+        let annotations: Vec<Symbol> = annotations.into_iter().map(|s| s.as_ref().into()).collect();
+        annotated_token = annotated_token.with_annotations(Thunk::wrap(annotations.into()));
+        srcs.insert(0, (instruction, annotated_token));
+
+        Ok(srcs)
+    }
+
     fn singleton_struct_src() -> IonResult<Srcs> {
         container_src(
             ContainerType::Struct,
@@ -872,6 +892,7 @@ mod tests {
     #[case::empty_list(container_src(ContainerType::List, Ok(vec![])), "[]")]
     #[case::empty_sexp(container_src(ContainerType::SExp, Ok(vec![])), "()")]
     #[case::empty_struct(container_src(ContainerType::Struct, Ok(vec![])), "{}")]
+    #[case::annotated(annotate_first_srcs(["a", "b", "c"], single_src(false)), "a::b::c::false")]
     fn source_test<S>(#[case] expected: IonResult<Srcs>, #[case] data: S) -> IonResult<()>
     where
         S: ToIonDataSource,
