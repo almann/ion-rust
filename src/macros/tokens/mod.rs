@@ -683,6 +683,7 @@ mod tests {
     use super::ContainerType::*;
     use super::ScalarValue::*;
     use super::*;
+    use crate::element::Element;
     use crate::{IonError, IonResult, IonType};
     use rstest::rstest;
     use std::fmt::Debug;
@@ -758,5 +759,53 @@ mod tests {
     #[case::strct(Value::Struct(empty_struct()))]
     fn test_invalid_scalar_conversion(#[case] bad_value: Value) {
         test_invalid_conversion::<_, ScalarValue>(bad_value)
+    }
+
+    /// Mini DSL for encoding test expectations
+    fn parse_str<S: AsRef<str>>(token_text: S) -> IonResult<AnnotatedToken<'static>> {
+        match token_text.as_ref() {
+            "(" => todo!(),
+            ")" => todo!(),
+            "[" => todo!(),
+            "]" => todo!(),
+            "{" => todo!(),
+            "}" => todo!(),
+            other_text => {
+                let element = Element::read_one(other_text)?;
+                let _token = if element.is_null() {
+                    Token::Null(element.ion_type())
+                } else {
+                    match element.ion_type() {
+                        IonType::Null => panic!("non-null null not possible"),
+                        IonType::Bool => Bool(element.as_bool().unwrap()),
+                        IonType::Int => Int(element.as_int().unwrap().clone()),
+                        IonType::Float => Float(element.as_float().unwrap()),
+                        IonType::Decimal => Decimal(element.as_decimal().unwrap().clone()),
+                        IonType::Timestamp => Timestamp(element.as_timestamp().unwrap().clone()),
+                        IonType::Symbol => Symbol(element.as_symbol().unwrap().clone()),
+                        IonType::String => String(element.as_string().unwrap().into()),
+                        IonType::Clob => Clob(element.as_clob().unwrap().clone().into()),
+                        IonType::Blob => Blob(element.as_blob().unwrap().clone().into()),
+                        IonType::List => illegal_operation("Cannot have list in test DSL")?,
+                        IonType::SExp => illegal_operation("Cannot have sexp in test DSL")?,
+                        IonType::Struct => illegal_operation("Cannot have struct in test DSL")?,
+                    }
+                    .into()
+                };
+                todo!()
+            }
+        }
+    }
+
+    fn parse<T, S, I>(token_texts: T) -> IonResult<Vec<AnnotatedToken<'static>>>
+    where
+        S: AsRef<str>,
+        T: IntoIterator<Item = S, IntoIter = I>,
+        I: Iterator<Item = S>,
+    {
+        token_texts
+            .into_iter()
+            .map(|s| parse_str(s.as_ref()))
+            .collect()
     }
 }
