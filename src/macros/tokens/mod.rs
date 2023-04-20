@@ -251,6 +251,9 @@ impl<'a> ScalarThunk<'a> {
 // TODO consider if we should implement Clone for Token/AnnotatedToken (forcing materialization)
 
 /// Represents a token within the stream.
+///
+/// A token may be deferred if it is a scalar value (non-null, non-container), and containers are
+/// represented as two tokens, their start and end.
 pub enum Token<'a> {
     Null(IonType),
     Scalar(ScalarThunk<'a>),
@@ -331,8 +334,6 @@ impl<'a> From<ScalarThunk<'a>> for Token<'a> {
 }
 
 /// A token decorated with annotations and a field name (which could be empty or inapplicable).
-///
-/// Tokens must be consumed to "read" them.
 pub struct AnnotatedToken<'a> {
     annotations: AnnotationsThunk<'a>,
     field_name: FieldNameThunk<'a>,
