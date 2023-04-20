@@ -696,7 +696,8 @@ mod tests {
     use super::ScalarValue::*;
     use super::*;
     use crate::data_source::ToIonDataSource;
-    use crate::{IonError, IonResult, IonType, ReaderBuilder};
+    use crate::element::{Blob as ElemBlob, Clob as ElemClob};
+    use crate::{Decimal, IonError, IonResult, IonType, ReaderBuilder, Symbol};
     use rstest::rstest;
     use std::fmt::Debug;
 
@@ -775,16 +776,30 @@ mod tests {
 
     type Src = (Instruction, AnnotatedToken<'static>);
 
-    fn single_scalar_src() -> Vec<Src> {
-        vec![
-            (Next, ScalarValue::Int(5.into()).into()),
+    fn single_scalar_src<T>(value: T) -> IonResult<Vec<Src>>
+    where
+        T: Into<Value>,
+    {
+        let value = value.into();
+        let scalar_value: ScalarValue = value.try_into()?;
+
+        Ok(vec![
+            (Next, scalar_value.into()),
             (Next, Token::EndStream.into()),
-        ]
+        ])
     }
 
     #[rstest]
-    #[case::single_scalar(single_scalar_src(), "5")]
-    fn source_test<S>(#[case] expected: Vec<Src>, #[case] data: S) -> IonResult<()>
+    #[case::bool(single_scalar_src(false), "false")]
+    #[case::int(single_scalar_src(5), "5")]
+    #[case::float(single_scalar_src(5.0), "5e0")]
+    #[case::decimal(single_scalar_src(Decimal::from(50)), "50.")]
+    #[case::timestamp(single_scalar_src(sample_timestamp()), "2023T")]
+    #[case::string(single_scalar_src("hello"), "'''hello'''")]
+    #[case::symbol(single_scalar_src(Symbol::from("world")), "world")]
+    #[case::blob(single_scalar_src(ElemBlob::from("foo".as_bytes())), "{{ Zm9v }}")]
+    #[case::clob(single_scalar_src(ElemClob::from("bar".as_bytes())), "{{'''bar'''}}")]
+    fn source_test<S>(#[case] expected: IonResult<Vec<Src>>, #[case] data: S) -> IonResult<()>
     where
         S: ToIonDataSource,
     {
@@ -792,7 +807,7 @@ mod tests {
 
         let reader = ReaderBuilder::new().build(data)?;
         let mut tokens: ReaderTokenSource<_> = reader.into();
-        for (instruction, expected_ann_token) in expected {
+        for (instruction, expected_ann_token) in expected? {
             let ann_token = tokens.next_token(instruction)?;
 
             let (exp_ann_thunk, exp_field_name_thunk, exp_token) = expected_ann_token.into_inner();
