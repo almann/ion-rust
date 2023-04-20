@@ -241,6 +241,11 @@ impl<'a> ScalarThunk<'a> {
     pub fn is_materialized(&self) -> bool {
         self.1.is_materialized()
     }
+
+    /// Returns the associated [`ScalarType`] for this thunk.
+    pub fn scalar_type(&self) -> ScalarType {
+        self.0
+    }
 }
 
 // TODO consider if we should implement Clone for Token/AnnotatedToken (forcing materialization)
@@ -277,7 +282,10 @@ impl<'a> Token<'a> {
 
     /// Indicates if this token is a scalar value (that may be deferred) and the corresponding type.
     pub fn scalar(&self) -> Option<ScalarType> {
-        todo!()
+        match self {
+            Token::Scalar(thunk) => Some(thunk.scalar_type()),
+            _ => None,
+        }
     }
 
     /// Indicates if this token is a start of a container and what type it is.
