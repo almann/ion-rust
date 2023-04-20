@@ -11,7 +11,7 @@
 //! with values without pulling in fully materializing the tree.
 
 use crate::element::{Annotations, Bytes, Value};
-use crate::macros::thunk::Thunk;
+use crate::macros::thunk::{Thunk, ThunkState};
 use crate::result::illegal_operation;
 use crate::text::text_formatter::IonValueFormatter;
 use crate::{
@@ -237,9 +237,9 @@ impl<'a> ScalarThunk<'a> {
         Ok(ScalarThunk(self.0, self.1.materialize()?))
     }
 
-    /// Convenience to determine if the thunk is materialized.
-    pub fn is_materialized(&self) -> bool {
-        self.1.is_materialized()
+    /// Returns the current thunk state.
+    pub fn thunk_state(&self) -> ThunkState {
+        self.1.thunk_state()
     }
 
     /// Returns the associated [`ScalarType`] for this thunk.
