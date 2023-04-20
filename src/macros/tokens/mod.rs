@@ -315,10 +315,7 @@ impl<'a> Token<'a> {
 
     /// Indicates if this token is the end of a stream.
     pub fn is_end_stream(&self) -> bool {
-        match self {
-            Token::EndStream => true,
-            _ => false,
-        }
+        matches!(self, Token::EndStream)
     }
 }
 
@@ -594,6 +591,18 @@ where
     }
 
     #[inline]
+    fn step_in(&mut self) -> IonResult<()> {
+        let mut reader = self.reader_cell.borrow_mut();
+        reader.step_in()
+    }
+
+    #[inline]
+    fn step_out(&mut self) -> IonResult<()> {
+        let mut reader = self.reader_cell.borrow_mut();
+        reader.step_out()
+    }
+
+    #[inline]
     fn is_null(&self) -> bool {
         let reader = self.reader_cell.borrow();
         reader.is_null()
@@ -643,9 +652,16 @@ where
                                 Some(IonType::String) => self.string_token(),
                                 Some(IonType::Clob) => self.clob_token(),
                                 Some(IonType::Blob) => self.blob_token(),
-                                Some(IonType::List) => Token::StartContainer(ContainerType::List),
-                                Some(IonType::SExp) => Token::StartContainer(ContainerType::SExp),
+                                Some(IonType::List) => {
+                                    self.step_in()?;
+                                    Token::StartContainer(ContainerType::List)
+                                }
+                                Some(IonType::SExp) => {
+                                    self.step_in()?;
+                                    Token::StartContainer(ContainerType::SExp)
+                                }
                                 Some(IonType::Struct) => {
+                                    self.step_in()?;
                                     Token::StartContainer(ContainerType::Struct)
                                 }
                             }
@@ -654,9 +670,18 @@ where
                     }
                     StreamItem::Nothing => match self.parent_type() {
                         None => Token::EndStream.into(),
-                        Some(IonType::SExp) => Token::EndContainer(ContainerType::SExp).into(),
-                        Some(IonType::List) => Token::EndContainer(ContainerType::List).into(),
-                        Some(IonType::Struct) => Token::EndContainer(ContainerType::Struct).into(),
+                        Some(IonType::SExp) => {
+                            self.step_out()?;
+                            Token::EndContainer(ContainerType::SExp).into()
+                        }
+                        Some(IonType::List) => {
+                            self.step_out()?;
+                            Token::EndContainer(ContainerType::List).into()
+                        }
+                        Some(IonType::Struct) => {
+                            self.step_out()?;
+                            Token::EndContainer(ContainerType::Struct).into()
+                        }
                         Some(ion_type) => illegal_operation(format!(
                             "Unexpected non-container type: {}",
                             ion_type
@@ -667,12 +692,22 @@ where
             NextEnd => match self.parent_type() {
                 None => illegal_operation("Cannot skip to next end at top-level")?,
                 Some(ion_type) => match ion_type {
-                    IonType::List => todo!(),
-                    IonType::SExp => todo!(),
-                    IonType::Struct => todo!(),
+                    IonType::List => {
+                        self.step_out()?;
+                        Token::EndContainer(ContainerType::List)
+                    }
+                    IonType::SExp => {
+                        self.step_out()?;
+                        Token::EndContainer(ContainerType::SExp)
+                    }
+                    IonType::Struct => {
+                        self.step_out()?;
+                        Token::EndContainer(ContainerType::Struct)
+                    }
                     _ => illegal_operation(format!("Unexpected container type: {}", ion_type))?,
                 },
-            },
+            }
+            .into(),
         })
     }
 }
@@ -738,9 +773,8 @@ mod tests {
         F: PartialEq + Debug + Display + Clone,
     {
         let from_clone = bad_from.clone();
-        match T::try_from(bad_from) {
-            Ok(t) => panic!("Unexpected conversion from {} to {}", from_clone, t),
-            Err(_) => (),
+        if let Ok(t) = T::try_from(bad_from) {
+            panic!("Unexpected conversion from {} to {}", from_clone, t);
         }
     }
 
@@ -775,39 +809,46 @@ mod tests {
     }
 
     type Src = (Instruction, AnnotatedToken<'static>);
+    type Srcs = Vec<Src>;
 
-    fn single_scalar_src<T>(value: T) -> IonResult<Vec<Src>>
+    fn single_src<T>(value: T) -> IonResult<Srcs>
     where
         T: Into<Value>,
     {
         let value = value.into();
         let scalar_value: ScalarValue = value.try_into()?;
 
-        Ok(vec![
-            (Next, scalar_value.into()),
-            (Next, Token::EndStream.into()),
-        ])
+        Ok(vec![(Next, scalar_value.into())])
     }
 
     #[rstest]
-    #[case::bool(single_scalar_src(false), "false")]
-    #[case::int(single_scalar_src(5), "5")]
-    #[case::float(single_scalar_src(5.0), "5e0")]
-    #[case::decimal(single_scalar_src(Decimal::from(50)), "50.")]
-    #[case::timestamp(single_scalar_src(sample_timestamp()), "2023T")]
-    #[case::string(single_scalar_src("hello"), "'''hello'''")]
-    #[case::symbol(single_scalar_src(Symbol::from("world")), "world")]
-    #[case::blob(single_scalar_src(ElemBlob::from("foo".as_bytes())), "{{ Zm9v }}")]
-    #[case::clob(single_scalar_src(ElemClob::from("bar".as_bytes())), "{{'''bar'''}}")]
-    fn source_test<S>(#[case] expected: IonResult<Vec<Src>>, #[case] data: S) -> IonResult<()>
+    #[case::bool(single_src(false), "false")]
+    #[case::int(single_src(5), "5")]
+    #[case::float(single_src(5.0), "5e0")]
+    #[case::decimal(single_src(Decimal::from(50)), "50.")]
+    #[case::timestamp(single_src(sample_timestamp()), "2023T")]
+    #[case::string(single_src("hello"), "'''hello'''")]
+    #[case::symbol(single_src(Symbol::from("world")), "world")]
+    #[case::blob(single_src(ElemBlob::from("foo".as_bytes())), "{{ Zm9v }}")]
+    #[case::clob(single_src(ElemClob::from("bar".as_bytes())), "{{'''bar'''}}")]
+    #[case::singleton_list(container_src(ContainerType::List, single_src(false)), "[false]")]
+    #[case::singleton_sexp(container_src(ContainerType::SExp, single_src(1.0)), "(1e0)")]
+    // TODO add struct single test
+    #[case::empty_list(container_src(ContainerType::List, Ok(vec![])), "[]")]
+    #[case::empty_sexp(container_src(ContainerType::SExp, Ok(vec![])), "()")]
+    #[case::empty_struct(container_src(ContainerType::Struct, Ok(vec![])), "{}")]
+    fn source_test<S>(#[case] expected: IonResult<Srcs>, #[case] data: S) -> IonResult<()>
     where
         S: ToIonDataSource,
     {
         use Token::*;
+        let mut expected_src = expected?;
+        // add the terminator
+        expected_src.push((Next, EndStream.into()));
 
         let reader = ReaderBuilder::new().build(data)?;
         let mut tokens: ReaderTokenSource<_> = reader.into();
-        for (instruction, expected_ann_token) in expected? {
+        for (instruction, expected_ann_token) in expected_src {
             let ann_token = tokens.next_token(instruction)?;
 
             let (exp_ann_thunk, exp_field_name_thunk, exp_token) = expected_ann_token.into_inner();
@@ -848,5 +889,13 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    fn container_src(container_type: ContainerType, contents: IonResult<Srcs>) -> IonResult<Srcs> {
+        let mut srcs = vec![];
+        srcs.push((Next, Token::StartContainer(container_type).into()));
+        srcs.append(&mut contents?);
+        srcs.push((Next, Token::EndContainer(container_type).into()));
+        Ok(srcs)
     }
 }
