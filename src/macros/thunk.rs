@@ -20,7 +20,7 @@ pub enum ThunkState {
     Error,
 }
 
-pub type ThunkFn<'a, T> = Box<dyn FnOnce() -> IonResult<T> + 'a>;
+type ThunkFn<'a, T> = Box<dyn FnMut() -> IonResult<T> + 'a>;
 
 enum ThunkVal<'a, T> {
     Deferred(ThunkFn<'a, T>),
@@ -46,7 +46,7 @@ impl<'a, T> Thunk<'a, T> {
     #[inline]
     pub fn defer<F>(closure: F) -> Thunk<'a, T>
     where
-        F: FnOnce() -> IonResult<T> + 'a,
+        F: FnMut() -> IonResult<T> + 'a,
     {
         Thunk(Ok(ThunkVal::Deferred(Box::new(closure))))
     }
@@ -55,7 +55,7 @@ impl<'a, T> Thunk<'a, T> {
     pub fn evaluate(self) -> IonResult<T> {
         use ThunkVal::*;
         match self.0 {
-            Ok(Deferred(func)) => func(),
+            Ok(Deferred(mut func)) => func(),
             Ok(Materialized(value)) => Ok(value),
             Err(e) => Err(e),
         }
@@ -65,7 +65,7 @@ impl<'a, T> Thunk<'a, T> {
     pub fn materialize(self) -> IonResult<Thunk<'static, T>> {
         use ThunkVal::*;
         match self.0 {
-            Ok(Deferred(func)) => {
+            Ok(Deferred(mut func)) => {
                 let value = func()?;
                 Ok(Thunk::wrap(value))
             }
@@ -106,7 +106,7 @@ impl<'a, T> Thunk<'a, T> {
         let thunk_res = std::mem::replace(&mut self.0, illegal_operation("Empty thunk"));
         // attempt to evaluate (if possible/needed)
         let value_res = match thunk_res {
-            Ok(Deferred(func)) => func(),
+            Ok(Deferred(mut func)) => func(),
             Ok(Materialized(val)) => Ok(val),
             Err(e) => Err(e),
         };
@@ -137,17 +137,38 @@ impl<'a, T> Thunk<'a, T> {
     }
 }
 
+impl<'a, T> Thunk<'a, T>
+where
+    T: Clone,
+{
+    /// Evaluates the current value and moves it out of the value.
+    ///
+    /// This method is useful when you want to keep a value lazy and allow multiple evaluations
+    /// against the underlying closure.
+    ///
+    /// This will keep the thunk deferred if it was deferred, clone the value if materialized,
+    /// and clone the error if in error.
+    pub fn no_memoize(&mut self) -> IonResult<T> {
+        use ThunkVal::*;
+        match &mut self.0 {
+            Ok(Deferred(ref mut func)) => func(),
+            Ok(Materialized(value)) => Ok(value.clone()),
+            Err(e) => Err(e.clone()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::IonResult;
 
     #[test]
-    fn test_thunk_materialize() -> IonResult<()> {
+    fn test_materialize() -> IonResult<()> {
         let thunk = {
             let i = 15;
             let i_ref = &i;
-            let deferred = Thunk::defer(|| return Ok(*i_ref));
+            let deferred = Thunk::defer(|| Ok(*i_ref));
             assert_eq!(ThunkState::Deferred, deferred.thunk_state());
             deferred.materialize()?
         };
@@ -157,8 +178,8 @@ mod tests {
     }
 
     #[test]
-    fn test_thunk_memoize_value() -> IonResult<()> {
-        let mut thunk = Thunk::defer(|| return Ok(5));
+    fn test_memoize_value() -> IonResult<()> {
+        let mut thunk = Thunk::defer(|| Ok(5));
         assert_eq!(ThunkState::Deferred, thunk.thunk_state());
         assert_eq!(5, *thunk.memoize()?);
         assert_eq!(ThunkState::Materialized, thunk.thunk_state());
@@ -166,8 +187,8 @@ mod tests {
     }
 
     #[test]
-    fn test_thunk_memoize_error() -> IonResult<()> {
-        let mut thunk: Thunk<i32> = Thunk::defer(|| return illegal_operation("Oops"));
+    fn test_memoize_error() -> IonResult<()> {
+        let mut thunk: Thunk<i32> = Thunk::defer(|| illegal_operation("Oops"));
         assert_eq!(ThunkState::Deferred, thunk.thunk_state());
         assert_eq!(illegal_operation("Oops"), thunk.memoize());
         assert_eq!(ThunkState::Error, thunk.thunk_state());
@@ -175,8 +196,8 @@ mod tests {
     }
 
     #[test]
-    fn test_thunk_remove() -> IonResult<()> {
-        let mut thunk = Thunk::defer(|| return Ok(999));
+    fn test_remove() -> IonResult<()> {
+        let mut thunk = Thunk::defer(|| Ok(999));
         assert_eq!(ThunkState::Deferred, thunk.thunk_state());
         assert_eq!(999, thunk.remove()?);
         assert_eq!(ThunkState::Error, thunk.thunk_state());
@@ -185,12 +206,29 @@ mod tests {
     }
 
     #[test]
-    fn test_thunk_replace() -> IonResult<()> {
-        let mut thunk = Thunk::defer(|| return Ok(1024));
+    fn test_replace() -> IonResult<()> {
+        let mut thunk = Thunk::defer(|| Ok(1024));
         assert_eq!(ThunkState::Deferred, thunk.thunk_state());
         assert_eq!(1024, thunk.replace(99)?);
         assert_eq!(ThunkState::Materialized, thunk.thunk_state());
         assert_eq!(99, thunk.evaluate()?);
+        Ok(())
+    }
+
+    #[test]
+    fn test_no_memoize() -> IonResult<()> {
+        let mut count = 0;
+        let mut thunk = Thunk::defer(|| {
+            count += 1;
+            Ok(500)
+        });
+        for _ in 0..10 {
+            assert_eq!(ThunkState::Deferred, thunk.thunk_state());
+            assert_eq!(500, thunk.no_memoize()?);
+        }
+        assert_eq!(ThunkState::Deferred, thunk.thunk_state());
+        drop(thunk);
+        assert_eq!(10, count);
         Ok(())
     }
 }
