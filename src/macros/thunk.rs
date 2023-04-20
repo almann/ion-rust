@@ -12,8 +12,11 @@ use crate::IonResult;
 /// Describes the state of a [`Thunk`].
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ThunkState {
+    /// The value has not been evaluated yet.
     Deferred,
+    /// The value has been evaluated.
     Materialized,
+    /// The value can never be evaluated. Represents failed computation of a value.
     Error,
 }
 
