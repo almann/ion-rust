@@ -120,6 +120,8 @@ impl<'a, T> Thunk<'a, T> {
         old_res
     }
 
+    // TODO consider adding a deferred replace if we need it
+
     /// Returns the current status of the thunk.
     pub fn thunk_state(&self) -> ThunkState {
         use ThunkVal::*;
@@ -165,6 +167,26 @@ mod tests {
         assert_eq!(ThunkState::Deferred, thunk.thunk_state());
         assert_eq!(illegal_operation("Oops"), thunk.memoize());
         assert_eq!(ThunkState::Error, thunk.thunk_state());
+        Ok(())
+    }
+
+    #[test]
+    fn test_thunk_remove() -> IonResult<()> {
+        let mut thunk = Thunk::defer(|| return Ok(999));
+        assert_eq!(ThunkState::Deferred, thunk.thunk_state());
+        assert_eq!(999, thunk.remove()?);
+        assert_eq!(ThunkState::Error, thunk.thunk_state());
+        assert_eq!(illegal_operation("Empty thunk"), thunk.evaluate());
+        Ok(())
+    }
+
+    #[test]
+    fn test_thunk_replace() -> IonResult<()> {
+        let mut thunk = Thunk::defer(|| return Ok(1024));
+        assert_eq!(ThunkState::Deferred, thunk.thunk_state());
+        assert_eq!(1024, thunk.replace(99)?);
+        assert_eq!(ThunkState::Materialized, thunk.thunk_state());
+        assert_eq!(99, thunk.evaluate()?);
         Ok(())
     }
 }
