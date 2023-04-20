@@ -377,6 +377,9 @@ impl<'a> AnnotatedToken<'a> {
     }
 
     /// Materializes in place the field name and make it shared.
+    ///
+    /// This is useful when we need the field name to be callable over and over without producing
+    /// a deep copy.
     pub fn share_field_name(&mut self) -> IonResult<Symbol> {
         match self.field_name.remove() {
             Ok(symbol) => {
