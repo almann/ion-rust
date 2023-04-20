@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 
 //! Provides simple support for controlling lazy/strict evaluation.
+//! See [`Thunk`] for details.
 
 // TODO consider if this should be in a more general place in the crate
 // TODO consider making these thunks memoize to avoid the only once restriction
