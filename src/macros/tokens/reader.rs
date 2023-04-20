@@ -112,7 +112,11 @@ where
             None => illegal_operation("No field name"),
             Some(token_cell) => {
                 let mut annotated_token = token_cell.borrow_mut();
-                annotated_token.share_field_name()
+                match annotated_token.share_field_name() {
+                    Ok(Some(symbol)) => Ok(symbol),
+                    Ok(None) => illegal_operation("No field name"),
+                    Err(e) => Err(e),
+                }
             }
         }
     }

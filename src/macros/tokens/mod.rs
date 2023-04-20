@@ -216,14 +216,16 @@ impl Display for ScalarValue {
 /// Deferred computation of annotations.
 pub type AnnotationsThunk<'a> = Thunk<'a, Annotations>;
 
-/// Deferred computation of a field name.
-pub type FieldNameThunk<'a> = Thunk<'a, Symbol>;
+/// Deferred computation of a field name. [`Option`] is used here to denote lack of field versus
+/// and error parsing the field.
+pub type FieldNameThunk<'a> = Thunk<'a, Option<Symbol>>;
 
 // XXX note that we're "stuttering" on the tag of the union here because we need the type before
 //     we evaluate the data.
 // XXX there is a sharp edge here that the types have to align, so we do not expose it as public
 // TODO consider if it is worth modeling the thunk side value as an untagged union
 /// Deferred computation of a non-null, non-container value.
+#[derive(Debug)]
 pub struct ScalarThunk<'a>(pub(crate) ScalarType, pub(crate) Thunk<'a, ScalarValue>);
 
 impl<'a> ScalarThunk<'a> {
@@ -254,6 +256,7 @@ impl<'a> ScalarThunk<'a> {
 ///
 /// A token may be deferred if it is a scalar value (non-null, non-container), and containers are
 /// represented as two tokens, their start and end.
+#[derive(Debug)]
 pub enum Token<'a> {
     Null(IonType),
     Scalar(ScalarThunk<'a>),
@@ -334,6 +337,7 @@ impl<'a> From<ScalarThunk<'a>> for Token<'a> {
 }
 
 /// A token decorated with annotations and a field name (which could be empty or inapplicable).
+#[derive(Debug)]
 pub struct AnnotatedToken<'a> {
     annotations: AnnotationsThunk<'a>,
     field_name: FieldNameThunk<'a>,
@@ -381,13 +385,14 @@ impl<'a> AnnotatedToken<'a> {
     ///
     /// This is useful when we need the field name to be callable over and over without producing
     /// a deep copy.
-    pub fn share_field_name(&mut self) -> IonResult<Symbol> {
+    pub fn share_field_name(&mut self) -> IonResult<Option<Symbol>> {
         match self.field_name.remove() {
-            Ok(symbol) => {
+            Ok(Some(symbol)) => {
                 let new_symbol = symbol.into_shared();
-                let _ = self.field_name.replace(new_symbol.clone());
-                Ok(new_symbol)
+                let _ = self.field_name.replace(Some(new_symbol.clone()));
+                Ok(Some(new_symbol))
             }
+            Ok(None) => Ok(None),
             Err(e) => Err(e),
         }
     }
@@ -395,10 +400,16 @@ impl<'a> AnnotatedToken<'a> {
 
 impl<'a> From<Token<'a>> for AnnotatedToken<'a> {
     fn from(value: Token<'a>) -> Self {
+        AnnotatedToken::new(Thunk::wrap(Annotations::empty()), Thunk::wrap(None), value)
+    }
+}
+
+impl From<ScalarValue> for AnnotatedToken<'static> {
+    fn from(value: ScalarValue) -> Self {
         AnnotatedToken::new(
             Thunk::wrap(Annotations::empty()),
-            Thunk::defer(|| illegal_operation("No field name")),
-            value,
+            Thunk::wrap(None),
+            value.into(),
         )
     }
 }
@@ -453,9 +464,9 @@ where
                 let reader_cell = self.reader_cell.clone();
                 // XXX note that we expect a field name, so we do want that to surface as error
                 //     and not None
-                Thunk::defer(move || Ok(reader_cell.borrow().field_name()?))
+                Thunk::defer(move || Ok(Some(reader_cell.borrow().field_name()?)))
             }
-            _ => Thunk::defer(|| illegal_operation("No field name")),
+            _ => Thunk::wrap(None),
         }
     }
 
@@ -681,10 +692,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::ContainerType::*;
+    use super::Instruction::*;
     use super::ScalarValue::*;
     use super::*;
-    use crate::element::Element;
-    use crate::{IonError, IonResult, IonType};
+    use crate::data_source::ToIonDataSource;
+    use crate::{IonError, IonResult, IonType, ReaderBuilder};
     use rstest::rstest;
     use std::fmt::Debug;
 
@@ -761,51 +773,65 @@ mod tests {
         test_invalid_conversion::<_, ScalarValue>(bad_value)
     }
 
-    /// Mini DSL for encoding test expectations
-    fn parse_str<S: AsRef<str>>(token_text: S) -> IonResult<AnnotatedToken<'static>> {
-        match token_text.as_ref() {
-            "(" => todo!(),
-            ")" => todo!(),
-            "[" => todo!(),
-            "]" => todo!(),
-            "{" => todo!(),
-            "}" => todo!(),
-            other_text => {
-                let element = Element::read_one(other_text)?;
-                let _token = if element.is_null() {
-                    Token::Null(element.ion_type())
-                } else {
-                    match element.ion_type() {
-                        IonType::Null => panic!("non-null null not possible"),
-                        IonType::Bool => Bool(element.as_bool().unwrap()),
-                        IonType::Int => Int(element.as_int().unwrap().clone()),
-                        IonType::Float => Float(element.as_float().unwrap()),
-                        IonType::Decimal => Decimal(element.as_decimal().unwrap().clone()),
-                        IonType::Timestamp => Timestamp(element.as_timestamp().unwrap().clone()),
-                        IonType::Symbol => Symbol(element.as_symbol().unwrap().clone()),
-                        IonType::String => String(element.as_string().unwrap().into()),
-                        IonType::Clob => Clob(element.as_clob().unwrap().clone().into()),
-                        IonType::Blob => Blob(element.as_blob().unwrap().clone().into()),
-                        IonType::List => illegal_operation("Cannot have list in test DSL")?,
-                        IonType::SExp => illegal_operation("Cannot have sexp in test DSL")?,
-                        IonType::Struct => illegal_operation("Cannot have struct in test DSL")?,
-                    }
-                    .into()
-                };
-                todo!()
-            }
-        }
+    type Src = (Instruction, AnnotatedToken<'static>);
+
+    fn single_scalar_src() -> Vec<Src> {
+        vec![
+            (Next, ScalarValue::Int(5.into()).into()),
+            (Next, Token::EndStream.into()),
+        ]
     }
 
-    fn parse<T, S, I>(token_texts: T) -> IonResult<Vec<AnnotatedToken<'static>>>
+    #[rstest]
+    #[case::single_scalar(single_scalar_src(), "5")]
+    fn source_test<S>(#[case] expected: Vec<Src>, #[case] data: S) -> IonResult<()>
     where
-        S: AsRef<str>,
-        T: IntoIterator<Item = S, IntoIter = I>,
-        I: Iterator<Item = S>,
+        S: ToIonDataSource,
     {
-        token_texts
-            .into_iter()
-            .map(|s| parse_str(s.as_ref()))
-            .collect()
+        use Token::*;
+
+        let reader = ReaderBuilder::new().build(data)?;
+        let mut tokens: ReaderTokenSource<_> = reader.into();
+        for (instruction, expected_ann_token) in expected {
+            let ann_token = tokens.next_token(instruction)?;
+
+            let (exp_ann_thunk, exp_field_name_thunk, exp_token) = expected_ann_token.into_inner();
+            let (ann_thunk, field_name_thunk, actual_token) = ann_token.into_inner();
+
+            let exp_anns = exp_ann_thunk.evaluate()?;
+            let actual_anns = ann_thunk.evaluate()?;
+            assert_eq!(exp_anns, actual_anns);
+
+            let exp_field_name = exp_field_name_thunk.evaluate()?;
+            let actual_field_name = field_name_thunk.evaluate()?;
+            assert_eq!(exp_field_name, actual_field_name);
+
+            match (exp_token, actual_token) {
+                (Null(exp_ion_type), Null(actual_ion_type)) => {
+                    assert_eq!(exp_ion_type, actual_ion_type);
+                }
+                (Scalar(exp_scalar_thunk), Scalar(actual_scalar_thunk)) => {
+                    let exp_scalar = exp_scalar_thunk.evaluate()?;
+                    let actual_scalar = actual_scalar_thunk.evaluate()?;
+                    assert_eq!(exp_scalar, actual_scalar);
+                }
+                (StartContainer(exp_c_type), StartContainer(actual_c_type)) => {
+                    assert_eq!(exp_c_type, actual_c_type);
+                }
+                (EndContainer(exp_c_type), EndContainer(actual_c_type)) => {
+                    assert_eq!(exp_c_type, actual_c_type);
+                }
+                (EndStream, EndStream) => {
+                    // nothing to assert!
+                }
+                (exp_token, actual_token) => {
+                    panic!(
+                        "Tokens {:?} and {:?} are not the same",
+                        exp_token, actual_token
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 }

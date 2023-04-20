@@ -8,6 +8,7 @@
 
 use crate::result::illegal_operation;
 use crate::IonResult;
+use std::fmt::{Debug, Formatter};
 
 /// Describes the state of a [`Thunk`].
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -27,6 +28,19 @@ enum ThunkVal<'a, T> {
     Materialized(T),
 }
 
+impl<'a, T> Debug for ThunkVal<'a, T>
+where
+    T: Debug,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use ThunkVal::*;
+        match self {
+            Deferred(_) => write!(f, "ThunkVal::Deferred(...)"),
+            Materialized(value) => write!(f, "ThunkVal::Materialized({:?}", value),
+        }
+    }
+}
+
 /// A simple, potentially deferred or owned value.
 ///
 /// The thunk can be in one of three states:
@@ -35,6 +49,7 @@ enum ThunkVal<'a, T> {
 /// * [**Error**](ThunkState::Error): The value can never be materialized.
 ///   This can happen when [`Thunk::memoize`] is used to *attempt* to materialize a deferred
 ///   value in place.
+#[derive(Debug)]
 pub struct Thunk<'a, T>(IonResult<ThunkVal<'a, T>>);
 
 impl<'a, T> Thunk<'a, T> {
