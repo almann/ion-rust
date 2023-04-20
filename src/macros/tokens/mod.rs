@@ -361,6 +361,16 @@ impl<'a> AnnotatedToken<'a> {
         (self.annotations, self.field_name, self.token)
     }
 
+    /// Consumes and decorates this token with a field name.
+    pub fn with_field_name(self, field_name: FieldNameThunk<'a>) -> Self {
+        Self::new(self.annotations, field_name, self.token)
+    }
+
+    /// Consumes and decorates this token with annotations.
+    pub fn with_annotations(self, annotations: AnnotationsThunk<'a>) -> Self {
+        Self::new(annotations, self.field_name, self.token)
+    }
+
     /// Returns a reference of the underlying token for this decorated one.
     ///
     /// This is generally used to observe non-destructive information about a token.
@@ -821,6 +831,31 @@ mod tests {
         Ok(vec![(Next, scalar_value.into())])
     }
 
+    fn field_named_srcs<C, I, S>(names: C, srcs: IonResult<Srcs>) -> IonResult<Srcs>
+    where
+        C: IntoIterator<Item = S, IntoIter = I>,
+        I: Iterator<Item = S>,
+        S: AsRef<str>,
+    {
+        names
+            .into_iter()
+            .zip(srcs?.into_iter())
+            .map(|(name, (insn, a_tok))| {
+                Ok((
+                    insn,
+                    a_tok.with_field_name(Thunk::wrap(Some(name.as_ref().into()))),
+                ))
+            })
+            .collect()
+    }
+
+    fn singleton_struct_src() -> IonResult<Srcs> {
+        container_src(
+            ContainerType::Struct,
+            field_named_srcs(["a"], single_src(5)),
+        )
+    }
+
     #[rstest]
     #[case::bool(single_src(false), "false")]
     #[case::int(single_src(5), "5")]
@@ -833,7 +868,7 @@ mod tests {
     #[case::clob(single_src(ElemClob::from("bar".as_bytes())), "{{'''bar'''}}")]
     #[case::singleton_list(container_src(ContainerType::List, single_src(false)), "[false]")]
     #[case::singleton_sexp(container_src(ContainerType::SExp, single_src(1.0)), "(1e0)")]
-    // TODO add struct single test
+    #[case::singleton_struct(singleton_struct_src(), "{a:5}")]
     #[case::empty_list(container_src(ContainerType::List, Ok(vec![])), "[]")]
     #[case::empty_sexp(container_src(ContainerType::SExp, Ok(vec![])), "()")]
     #[case::empty_struct(container_src(ContainerType::Struct, Ok(vec![])), "{}")]
@@ -845,10 +880,13 @@ mod tests {
         let mut expected_src = expected?;
         // add the terminator
         expected_src.push((Next, EndStream.into()));
+        let expected_count = expected_src.len();
 
         let reader = ReaderBuilder::new().build(data)?;
         let mut tokens: ReaderTokenSource<_> = reader.into();
+        let mut actual_count: usize = 0;
         for (instruction, expected_ann_token) in expected_src {
+            actual_count += 1;
             let ann_token = tokens.next_token(instruction)?;
 
             let (exp_ann_thunk, exp_field_name_thunk, exp_token) = expected_ann_token.into_inner();
@@ -888,6 +926,7 @@ mod tests {
                 }
             }
         }
+        assert_eq!(expected_count, actual_count);
         Ok(())
     }
 
