@@ -38,11 +38,13 @@ pub use self::bytes::Bytes;
 pub use annotations::Annotations;
 pub use lob::{Blob, Clob};
 
-use crate::tokens::ScalarValue;
 pub use list::List;
 pub use r#struct::Struct;
 pub use sequence::Sequence;
 pub use sexp::SExp;
+
+#[cfg(feature = "experimental")]
+use crate::tokens::ScalarValue;
 
 impl IonEq for Value {
     fn ion_eq(&self, other: &Self) -> bool {
@@ -219,6 +221,7 @@ impl From<Struct> for Value {
     }
 }
 
+#[cfg(feature = "experimental")]
 impl From<ScalarValue> for Value {
     fn from(value: ScalarValue) -> Self {
         match value {

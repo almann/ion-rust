@@ -192,9 +192,13 @@ mod symbol_table;
 mod system_reader;
 mod writer;
 
-// Experimental for 1.1
-mod macros;
+// Experimental for Ion 1.1
+
+#[cfg(feature = "experimental")]
+pub(crate) mod macros;
+#[cfg(feature = "experimental")]
 pub(crate) mod thunk;
+#[cfg(feature = "experimental")]
 pub(crate) mod tokens;
 
 #[doc(inline)]
