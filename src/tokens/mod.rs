@@ -201,8 +201,15 @@ impl<'a> ScalarThunk<'a> {
     }
 
     /// Evaluates the deferred value and returns it as a thunk.
+    /// See [`Thunk::materialize`] for details.
     pub fn materialize(self) -> IonResult<ScalarThunk<'static>> {
         Ok(ScalarThunk(self.0, self.1.materialize()?))
+    }
+
+    /// In-place materialization of the thunk.
+    /// See [`Thunk::memoize`] for details.
+    pub fn memoize(&mut self) -> IonResult<&ScalarValue> {
+        self.1.memoize()
     }
 
     /// Returns the current thunk state.
@@ -232,7 +239,8 @@ pub enum Token<'a> {
 }
 
 impl<'a> Token<'a> {
-    /// Consume this token to one that owns its content.
+    /// Consumes this token to one that owns its content.
+    /// See [`Thunk::materialize`] for details.
     pub fn materialize(self) -> IonResult<Token<'static>> {
         use Token::*;
         Ok(match self {
@@ -242,6 +250,17 @@ impl<'a> Token<'a> {
             EndContainer(container_type) => EndContainer(container_type),
             EndStream => EndStream,
         })
+    }
+
+    /// In-place materialization of this token returning a reference to the underlying scalar
+    /// value if applicable.
+    /// See [`Thunk::memoize`] for details.
+    pub fn memoize_scalar(&mut self) -> IonResult<Option<&ScalarValue>> {
+        if let Token::Scalar(thunk) = self {
+            Ok(Some(thunk.memoize()?))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Indicates if this token is a null value and its corresponding type.
@@ -354,6 +373,18 @@ impl<'a> AnnotatedToken<'a> {
         ))
     }
 
+    // TODO fix this API to be a bit less awkward with returning a token reference...
+
+    /// Materialize in-place. Similar to [`Thunk::memoize`] for all the content.
+    pub fn memoize(&mut self) -> IonResult<(&Annotations, Option<&Symbol>, &Token)> {
+        self.token.memoize_scalar()?;
+        Ok((
+            self.annotations.memoize()?,
+            self.field_name.memoize()?.as_ref(),
+            &mut self.token,
+        ))
+    }
+
     /// Materializes in place the field name and make it shared.
     ///
     /// This is useful when we need the field name to be callable over and over without producing
@@ -399,11 +430,21 @@ pub enum Instruction {
 }
 
 /// Provides an iterator-like API over Ion data as [`AnnotatedToken`].
-pub trait TokenStream {
+pub trait TokenStream<'a> {
     /// Advances the stream to the next token.
     ///
+    /// Note that the lifetime of the resulting token is not bound to the lifetime of the borrow
+    /// in the method.  This is because it may be the case that the token needs to be used
+    /// outside of this context, particularly if adapting a stream to an [`IonReader`][1] where
+    /// the borrow of [`next`] is disassociated from a `read_XXX` method, the [`field_name`][2]
+    /// method, or the [`annotations`][3] method.
+    ///
     /// Returns that token or an error if there is some problem with the underlying stream.
-    fn next_token(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken>;
+    ///
+    /// [1]: crate::IonReader
+    /// [2]: crate::IonReader::field_name
+    /// [3]: crate::IonReader::annotations
+    fn next_token(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken<'a>>;
 }
 
 #[cfg(test)]

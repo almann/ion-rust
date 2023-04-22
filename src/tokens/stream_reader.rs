@@ -11,28 +11,24 @@ use std::cell::RefCell;
 /// It is important to note that adapting a stream in the middle of a container stream
 /// will treat it as top-level and only surface what it can see at that level.  It will not
 /// step out of the container.
-pub struct TokenStreamReader<T>
+pub struct TokenStreamReader<'a, T>
 where
-    T: TokenStream,
+    T: TokenStream<'a>,
 {
     stream: T,
     depth: usize,
 
-    // FIXME this is not right
-    // XXX really we have a problem between the lifetime of next() and the other APIs for the token
-    // XXX not sure if materialization is the right option or re-thinking how to manage the lifetime
-    //     since we're already using a Rc<RefCell<...>> under the hood
     // XXX this is a RefCell<AnnotationToken> because we need interior mutability for memoization
     /// the current token
-    curr_token_cell: Option<RefCell<AnnotatedToken<'static>>>,
+    curr_token_cell: Option<RefCell<AnnotatedToken<'a>>>,
 
     /// remember the current read item
     curr_item: StreamItem,
 }
 
-impl<T> From<T> for TokenStreamReader<T>
+impl<'a, T> From<T> for TokenStreamReader<'a, T>
 where
-    T: TokenStream,
+    T: TokenStream<'a>,
 {
     fn from(stream: T) -> Self {
         TokenStreamReader {
@@ -44,9 +40,9 @@ where
     }
 }
 
-impl<T> IonReader for TokenStreamReader<T>
+impl<'a, T> IonReader for TokenStreamReader<'a, T>
 where
-    T: TokenStream,
+    T: TokenStream<'a>,
 {
     type Item = StreamItem;
     type Symbol = Symbol;
@@ -65,8 +61,7 @@ where
                 return Ok(StreamItem::Nothing);
             }
         }
-        // FIXME should not require materialization!
-        let annotated_token = self.stream.next_token(Instruction::Next)?.materialize()?;
+        let annotated_token = self.stream.next_token(Instruction::Next)?;
         let item = match &annotated_token.token {
             Token::Null(ion_type) => StreamItem::Null(*ion_type),
             Token::Scalar(thunk) => StreamItem::Value(thunk.scalar_type().into()),
@@ -102,7 +97,7 @@ where
         }
     }
 
-    fn annotations<'a>(&'a self) -> Box<dyn Iterator<Item = IonResult<Self::Symbol>> + 'a> {
+    fn annotations<'b>(&'b self) -> Box<dyn Iterator<Item = IonResult<Self::Symbol>> + 'b> {
         todo!()
     }
 

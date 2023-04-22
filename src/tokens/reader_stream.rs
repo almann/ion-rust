@@ -11,8 +11,72 @@ use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::rc::Rc;
 
+const INVALID_TOKEN_ERR_TEXT: &'static str = "TokenStream is past this token";
+const INVALID_TOKEN_PANIC_TEXT: &'static str = "Invalid underlying reader state";
+
 // TODO make this more generic with respect to other readers--the problem is Item/Symbol
 // TODO this has to abstract over potentially system reader to implement macros
+
+/// Internal tracking state of the returned token.  This is necessary because the lifetime of the
+/// token returned from the stream is bound to the stream itself.
+///
+/// This is essentially strongly typed [`Option`] with convenience to operate within the
+/// context of a [`ReaderTokenStream`]
+enum UnderlyingReader<R>
+where
+    R: IonReader<Item = StreamItem, Symbol = Symbol>,
+{
+    Active(R),
+    Inactive,
+}
+
+impl<R> UnderlyingReader<R>
+where
+    R: IonReader<Item = StreamItem, Symbol = Symbol>,
+{
+    fn try_mut_ref(&mut self) -> IonResult<&mut R> {
+        use UnderlyingReader::*;
+        match self {
+            Active(reader) => Ok(reader),
+            Inactive => illegal_operation(INVALID_TOKEN_ERR_TEXT),
+        }
+    }
+
+    fn try_ref(&self) -> IonResult<&R> {
+        use UnderlyingReader::*;
+        match self {
+            Active(reader) => Ok(reader),
+            Inactive => illegal_operation(INVALID_TOKEN_ERR_TEXT),
+        }
+    }
+
+    fn as_mut_ref(&mut self) -> &mut R {
+        self.try_mut_ref().expect(INVALID_TOKEN_PANIC_TEXT)
+    }
+
+    fn as_ref(&self) -> &R {
+        self.try_ref().expect(INVALID_TOKEN_PANIC_TEXT)
+    }
+
+    /// Invalidates this reader returning its original underlying reader.
+    fn invalidate(&mut self) -> Self {
+        std::mem::replace(self, UnderlyingReader::Inactive)
+    }
+}
+
+/// Indicates the state of the last token returned.
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+enum PendingToken {
+    Materialized,
+    Deferred,
+    None,
+}
+
+impl PendingToken {
+    fn is_deferred(&self) -> bool {
+        matches!(self, PendingToken::Deferred)
+    }
+}
 
 /// Adapter for a [`TokenStream`] over an arbitrary [`IonReader`]
 pub struct ReaderTokenStream<'a, R>
@@ -20,7 +84,8 @@ where
     R: IonReader<Item = StreamItem, Symbol = Symbol> + 'a,
 {
     // XXX this is so we can have multiple closures to lazily evaluate tokens
-    reader_cell: Rc<RefCell<R>>,
+    reader_cell: Rc<RefCell<UnderlyingReader<R>>>,
+    pending_token: PendingToken,
     // XXX this allows us to explicitly capture a lifetime for the reader we operate on
     phantom: PhantomData<&'a R>,
 }
@@ -31,18 +96,18 @@ where
 {
     #[inline]
     fn annotations_thunk(&self) -> AnnotationsThunk<'a> {
-        let reader_cell = self.reader_cell.clone();
-        Thunk::defer(move || reader_cell.borrow().annotations().collect())
+        let reader_cell = Rc::clone(&self.reader_cell);
+        Thunk::defer(move || reader_cell.borrow().try_ref()?.annotations().collect())
     }
 
     #[inline]
     fn field_name_thunk(&self) -> FieldNameThunk<'a> {
         match self.parent_type() {
             Some(IonType::Struct) => {
-                let reader_cell = self.reader_cell.clone();
+                let reader_cell = Rc::clone(&self.reader_cell);
                 // XXX note that we expect a field name, so we do want that to surface as error
                 //     and not None
-                Thunk::defer(move || Ok(Some(reader_cell.borrow().field_name()?)))
+                Thunk::defer(move || Ok(Some(reader_cell.borrow().try_ref()?.field_name()?)))
             }
             _ => Thunk::wrap(None),
         }
@@ -50,11 +115,12 @@ where
 
     #[inline]
     fn bool_token(&mut self) -> Token<'a> {
-        let reader_cell = self.reader_cell.clone();
+        let reader_cell = Rc::clone(&self.reader_cell);
         ScalarThunk(
             ScalarType::Bool,
             Thunk::defer(move || {
-                let mut reader = reader_cell.borrow_mut();
+                let mut underlying = reader_cell.borrow_mut();
+                let reader = underlying.try_mut_ref()?;
                 Ok(ScalarValue::Bool(reader.read_bool()?))
             }),
         )
@@ -63,11 +129,12 @@ where
 
     #[inline]
     fn int_token(&mut self) -> Token<'a> {
-        let reader_cell = self.reader_cell.clone();
+        let reader_cell = Rc::clone(&self.reader_cell);
         ScalarThunk(
             ScalarType::Int,
             Thunk::defer(move || {
-                let mut reader = reader_cell.borrow_mut();
+                let mut underlying = reader_cell.borrow_mut();
+                let reader = underlying.try_mut_ref()?;
                 Ok(ScalarValue::Int(reader.read_int()?))
             }),
         )
@@ -76,11 +143,12 @@ where
 
     #[inline]
     fn float_token(&mut self) -> Token<'a> {
-        let reader_cell = self.reader_cell.clone();
+        let reader_cell = Rc::clone(&self.reader_cell);
         ScalarThunk(
             ScalarType::Float,
             Thunk::defer(move || {
-                let mut reader = reader_cell.borrow_mut();
+                let mut underlying = reader_cell.borrow_mut();
+                let reader = underlying.try_mut_ref()?;
                 Ok(ScalarValue::Float(reader.read_f64()?))
             }),
         )
@@ -89,11 +157,12 @@ where
 
     #[inline]
     fn decimal_token(&mut self) -> Token<'a> {
-        let reader_cell = self.reader_cell.clone();
+        let reader_cell = Rc::clone(&self.reader_cell);
         ScalarThunk(
             ScalarType::Decimal,
             Thunk::defer(move || {
-                let mut reader = reader_cell.borrow_mut();
+                let mut underlying = reader_cell.borrow_mut();
+                let reader = underlying.try_mut_ref()?;
                 Ok(ScalarValue::Decimal(reader.read_decimal()?))
             }),
         )
@@ -102,11 +171,12 @@ where
 
     #[inline]
     fn timestamp_token(&mut self) -> Token<'a> {
-        let reader_cell = self.reader_cell.clone();
+        let reader_cell = Rc::clone(&self.reader_cell);
         ScalarThunk(
             ScalarType::Timestamp,
             Thunk::defer(move || {
-                let mut reader = reader_cell.borrow_mut();
+                let mut underlying = reader_cell.borrow_mut();
+                let reader = underlying.try_mut_ref()?;
                 Ok(ScalarValue::Timestamp(reader.read_timestamp()?))
             }),
         )
@@ -115,11 +185,12 @@ where
 
     #[inline]
     fn string_token(&mut self) -> Token<'a> {
-        let reader_cell = self.reader_cell.clone();
+        let reader_cell = Rc::clone(&self.reader_cell);
         ScalarThunk(
             ScalarType::String,
             Thunk::defer(move || {
-                let mut reader = reader_cell.borrow_mut();
+                let mut underlying = reader_cell.borrow_mut();
+                let reader = underlying.try_mut_ref()?;
                 Ok(ScalarValue::String(reader.read_string()?))
             }),
         )
@@ -128,11 +199,12 @@ where
 
     #[inline]
     fn symbol_token(&mut self) -> Token<'a> {
-        let reader_cell = self.reader_cell.clone();
+        let reader_cell = Rc::clone(&self.reader_cell);
         ScalarThunk(
             ScalarType::Symbol,
             Thunk::defer(move || {
-                let mut reader = reader_cell.borrow_mut();
+                let mut underlying = reader_cell.borrow_mut();
+                let reader = underlying.try_mut_ref()?;
                 Ok(ScalarValue::Symbol(reader.read_symbol()?))
             }),
         )
@@ -141,11 +213,12 @@ where
 
     #[inline]
     fn blob_token(&mut self) -> Token<'a> {
-        let reader_cell = self.reader_cell.clone();
+        let reader_cell = Rc::clone(&self.reader_cell);
         ScalarThunk(
             ScalarType::Blob,
             Thunk::defer(move || {
-                let mut reader = reader_cell.borrow_mut();
+                let mut underlying = reader_cell.borrow_mut();
+                let reader = underlying.try_mut_ref()?;
                 Ok(ScalarValue::Blob(reader.read_blob()?.into()))
             }),
         )
@@ -154,11 +227,12 @@ where
 
     #[inline]
     fn clob_token(&mut self) -> Token<'a> {
-        let reader_cell = self.reader_cell.clone();
+        let reader_cell = Rc::clone(&self.reader_cell);
         ScalarThunk(
             ScalarType::Clob,
             Thunk::defer(move || {
-                let mut reader = reader_cell.borrow_mut();
+                let mut underlying = reader_cell.borrow_mut();
+                let reader = underlying.try_mut_ref()?;
                 Ok(ScalarValue::Clob(reader.read_clob()?.into()))
             }),
         )
@@ -166,54 +240,79 @@ where
     }
 
     #[inline]
+    fn invalidate_token(&mut self) {
+        // only invalidate if we have something deferred
+        if self.pending_token.is_deferred() {
+            let underlying = {
+                let mut original = self.reader_cell.borrow_mut();
+                original.invalidate()
+            };
+            self.reader_cell = Rc::new(RefCell::new(underlying));
+        }
+    }
+
+    #[inline]
     fn next(&mut self) -> IonResult<StreamItem> {
-        let mut reader = self.reader_cell.borrow_mut();
+        let mut underlying = self.reader_cell.borrow_mut();
+        let reader = underlying.as_mut_ref();
         reader.next()
     }
 
     #[inline]
     fn step_in(&mut self) -> IonResult<()> {
-        let mut reader = self.reader_cell.borrow_mut();
+        let mut underlying = self.reader_cell.borrow_mut();
+        let reader = underlying.as_mut_ref();
         reader.step_in()
     }
 
     #[inline]
     fn step_out(&mut self) -> IonResult<()> {
-        let mut reader = self.reader_cell.borrow_mut();
+        let mut underlying = self.reader_cell.borrow_mut();
+        let reader = underlying.as_mut_ref();
         reader.step_out()
     }
 
     #[inline]
     fn is_null(&self) -> bool {
-        let reader = self.reader_cell.borrow();
+        let underlying = self.reader_cell.borrow();
+        let reader = underlying.as_ref();
         reader.is_null()
     }
 
     #[inline]
     fn ion_type(&self) -> Option<IonType> {
-        let reader = self.reader_cell.borrow();
+        let underlying = self.reader_cell.borrow();
+        let reader = underlying.as_ref();
         reader.ion_type()
     }
 
     #[inline]
     fn parent_type(&self) -> Option<IonType> {
-        let reader = self.reader_cell.borrow();
+        let underlying = self.reader_cell.borrow();
+        let reader = underlying.as_ref();
         reader.parent_type()
     }
 }
 
-impl<'a, R> TokenStream for ReaderTokenStream<'a, R>
+impl<'a, R> TokenStream<'a> for ReaderTokenStream<'a, R>
 where
     R: IonReader<Item = StreamItem, Symbol = Symbol> + 'a,
 {
-    fn next_token(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken> {
+    fn next_token(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken<'a>> {
         use crate::tokens::Instruction::*;
+        // once we enter this method--we must invalidate any outstanding token references
+        // this has to do with the lifetime of the returned token which cannot be statically
+        self.invalidate_token();
 
+        // assume materialized
+        self.pending_token = PendingToken::Materialized;
         Ok(match instruction {
             Next => {
                 let item = self.next()?;
                 match item {
                     StreamItem::Value(ion_type) | StreamItem::Null(ion_type) => {
+                        // basically any value has a deferred operation
+                        self.pending_token = PendingToken::Deferred;
                         let annotations_thunk = self.annotations_thunk();
                         let field_name_thunk = self.field_name_thunk();
                         let token = if self.is_null() {
@@ -299,7 +398,8 @@ where
 {
     fn from(value: R) -> Self {
         ReaderTokenStream {
-            reader_cell: Rc::new(RefCell::new(value)),
+            reader_cell: Rc::new(RefCell::new(UnderlyingReader::Active(value))),
+            pending_token: PendingToken::None,
             phantom: Default::default(),
         }
     }
@@ -313,7 +413,7 @@ mod tests {
     use crate::element::{Blob as ElemBlob, Clob as ElemClob};
     use crate::result::{illegal_operation, illegal_operation_raw};
     use crate::tokens::{ContainerType, ScalarValue, Value};
-    use crate::{Decimal, IonResult, ReaderBuilder, Symbol};
+    use crate::{Decimal, IonError, IonResult, ReaderBuilder, Symbol};
     use rstest::rstest;
 
     /// An arbitrary timestamp as a filler for testing purposes.
@@ -487,6 +587,35 @@ mod tests {
             }
         }
         assert_eq!(expected_count, actual_count);
+        Ok(())
+    }
+
+    #[test]
+    fn test_lifetime() -> IonResult<()> {
+        let reader = ReaderBuilder::new().build("[1, 2, 3]")?;
+        let mut tokens: ReaderTokenStream<_> = reader.into();
+        {
+            let invalid_token = tokens.next_token(Next)?;
+            let mut valid_token = tokens.next_token(Next)?;
+
+            // make sure the token is invalid (annotations/field name on start container)
+            match invalid_token.materialize() {
+                Err(IonError::IllegalOperation { operation }) => {
+                    assert_eq!(INVALID_TOKEN_ERR_TEXT, operation)
+                }
+                Err(e) => panic!("Unexpected Error: {}", e),
+                _ => panic!("Should not be able to materialize"),
+            };
+
+            valid_token.memoize()?;
+            let _next_token = tokens.next_token(Next)?;
+
+            let (mut annotations, mut field_name, mut inner_token) = valid_token.into_inner();
+            assert!(field_name.memoize()?.is_none());
+            assert_eq!(0, annotations.memoize()?.len());
+            let scalar_opt = inner_token.memoize_scalar()?;
+            assert_eq!(Some(&ScalarValue::Int(1.into())), scalar_opt);
+        }
         Ok(())
     }
 }
