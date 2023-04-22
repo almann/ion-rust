@@ -1,21 +1,21 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 
-use super::{AnnotatedToken, Instruction, Token, TokenSource};
+use super::{AnnotatedToken, Instruction, Token, TokenStream};
 use crate::element::{Blob, Clob};
 use crate::result::illegal_operation;
 use crate::{Decimal, Int, IonReader, IonResult, IonType, Str, StreamItem, Symbol, Timestamp};
 use std::cell::RefCell;
 
-/// Adapts any [`TokenSource`] into an [`IonReader`].
+/// Adapts any [`TokenStream`] into an [`IonReader`].
 ///
-/// It is important to note that adapting a source in the middle of a container stream
+/// It is important to note that adapting a stream in the middle of a container stream
 /// will treat it as top-level and only surface what it can see at that level.  It will not
 /// step out of the container.
-pub struct TokenSourceReader<T>
+pub struct TokenStreamReader<T>
 where
-    T: TokenSource,
+    T: TokenStream,
 {
-    source: T,
+    stream: T,
     depth: usize,
 
     // FIXME this is not right
@@ -30,13 +30,13 @@ where
     curr_item: StreamItem,
 }
 
-impl<T> From<T> for TokenSourceReader<T>
+impl<T> From<T> for TokenStreamReader<T>
 where
-    T: TokenSource,
+    T: TokenStream,
 {
-    fn from(source: T) -> Self {
-        TokenSourceReader {
-            source,
+    fn from(stream: T) -> Self {
+        TokenStreamReader {
+            stream,
             depth: 0,
             curr_token_cell: None,
             curr_item: StreamItem::Nothing,
@@ -44,9 +44,9 @@ where
     }
 }
 
-impl<T> IonReader for TokenSourceReader<T>
+impl<T> IonReader for TokenStreamReader<T>
 where
-    T: TokenSource,
+    T: TokenStream,
 {
     type Item = StreamItem;
     type Symbol = Symbol;
@@ -66,7 +66,7 @@ where
             }
         }
         // FIXME should not require materialization!
-        let annotated_token = self.source.next_token(Instruction::Next)?.materialize()?;
+        let annotated_token = self.stream.next_token(Instruction::Next)?.materialize()?;
         let item = match &annotated_token.token {
             Token::Null(ion_type) => StreamItem::Null(*ion_type),
             Token::Scalar(thunk) => StreamItem::Value(thunk.scalar_type().into()),

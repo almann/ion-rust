@@ -4,7 +4,7 @@
 //!
 //! This is useful for composing and transforming over streams and is used by the macro
 //! system to operate on an Ion stream like a lexer.  It is intended to also be useful to compute
-//! the Ion data stream from macro expansion.  Conceptually [`TokenSource`] can be thought of as
+//! the Ion data stream from macro expansion.  Conceptually [`TokenStream`] can be thought of as
 //! a continuation of the computation of an Ion data stream.
 //!
 //! It pulls in parts of the [element crate](crate::element) API to make it easier to work
@@ -405,8 +405,8 @@ pub enum Instruction {
 }
 
 /// Provides an iterator-like API over Ion data as [`AnnotatedToken`].
-pub trait TokenSource {
-    /// Advances the source to the next token.
+pub trait TokenStream {
+    /// Advances the stream to the next token.
     ///
     /// Returns that token or an error if there is some problem with the underlying stream.
     fn next_token(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken>;
@@ -415,8 +415,8 @@ pub trait TokenSource {
 // TODO make this more generic with respect to other readers--the problem is Item/Symbol
 // TODO this has to abstract over potentially system reader to implement macros
 
-/// Adapter for a [`TokenSource`] over an arbitrary [`IonReader`]
-struct ReaderTokenSource<'a, R>
+/// Adapter for a [`TokenStream`] over an arbitrary [`IonReader`]
+struct ReaderTokenStream<'a, R>
 where
     R: IonReader<Item = StreamItem, Symbol = Symbol> + 'a,
 {
@@ -426,7 +426,7 @@ where
     phantom: PhantomData<&'a R>,
 }
 
-impl<'a, R> ReaderTokenSource<'a, R>
+impl<'a, R> ReaderTokenStream<'a, R>
 where
     R: IonReader<Item = StreamItem, Symbol = Symbol> + 'a,
 {
@@ -603,7 +603,7 @@ where
     }
 }
 
-impl<'a, R> TokenSource for ReaderTokenSource<'a, R>
+impl<'a, R> TokenStream for ReaderTokenStream<'a, R>
 where
     R: IonReader<Item = StreamItem, Symbol = Symbol> + 'a,
 {
@@ -694,12 +694,12 @@ where
     }
 }
 
-impl<'a, R> From<R> for ReaderTokenSource<'a, R>
+impl<'a, R> From<R> for ReaderTokenStream<'a, R>
 where
     R: IonReader<Item = StreamItem, Symbol = Symbol> + 'a,
 {
     fn from(value: R) -> Self {
-        ReaderTokenSource {
+        ReaderTokenStream {
             reader_cell: Rc::new(RefCell::new(value)),
             phantom: Default::default(),
         }
@@ -823,7 +823,7 @@ mod tests {
         let mut srcs = contents?;
         let (_, annotated_token) = srcs
             .pop()
-            .ok_or(illegal_operation_raw("No last element in source to change"))?;
+            .ok_or(illegal_operation_raw("No last element in stream to change"))?;
         srcs.push((NextEnd, annotated_token));
         Ok(srcs)
     }
@@ -899,7 +899,7 @@ mod tests {
     )]
     #[case::struct_skip_second(last_next_end(singleton_struct_src()), "{a:5, b:6, c:7}")]
     #[case::annotated(annotate_first_srcs(["a", "b", "c"], single_src(false)), "a::b::c::false")]
-    fn source_test<S>(#[case] expected: IonResult<Srcs>, #[case] data: S) -> IonResult<()>
+    fn stream_test<S>(#[case] expected: IonResult<Srcs>, #[case] data: S) -> IonResult<()>
     where
         S: ToIonDataSource,
     {
@@ -910,7 +910,7 @@ mod tests {
         let expected_count = expected_src.len();
 
         let reader = ReaderBuilder::new().build(data)?;
-        let mut tokens: ReaderTokenSource<_> = reader.into();
+        let mut tokens: ReaderTokenStream<_> = reader.into();
         let mut actual_count: usize = 0;
         for (instruction, expected_ann_token) in expected_src {
             actual_count += 1;
