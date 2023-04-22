@@ -63,9 +63,9 @@ impl IonType {
     }
 }
 
-impl From<crate::macros::tokens::ScalarType> for IonType {
-    fn from(value: crate::macros::tokens::ScalarType) -> Self {
-        use crate::macros::tokens::ScalarType::*;
+impl From<crate::tokens::ScalarType> for IonType {
+    fn from(value: crate::tokens::ScalarType) -> Self {
+        use crate::tokens::ScalarType::*;
         match value {
             Bool => IonType::Bool,
             Int => IonType::Int,
@@ -80,9 +80,9 @@ impl From<crate::macros::tokens::ScalarType> for IonType {
     }
 }
 
-impl From<crate::macros::tokens::ContainerType> for IonType {
-    fn from(value: crate::macros::tokens::ContainerType) -> Self {
-        use crate::macros::tokens::ContainerType::*;
+impl From<crate::tokens::ContainerType> for IonType {
+    fn from(value: crate::tokens::ContainerType) -> Self {
+        use crate::tokens::ContainerType::*;
         match value {
             SExp => IonType::SExp,
             List => IonType::List,

@@ -11,9 +11,9 @@
 //! with values without pulling in fully materializing the tree.
 
 use crate::element::{Annotations, Bytes, Value};
-use crate::macros::thunk::{Thunk, ThunkState};
 use crate::result::illegal_operation;
 use crate::text::text_formatter::IonValueFormatter;
+use crate::thunk::{Thunk, ThunkState};
 use crate::{
     Decimal, Int, IonError, IonReader, IonResult, IonType, Str, StreamItem, Symbol, Timestamp,
 };

@@ -38,7 +38,7 @@ pub use self::bytes::Bytes;
 pub use annotations::Annotations;
 pub use lob::{Blob, Clob};
 
-use crate::macros::tokens::ScalarValue;
+use crate::tokens::ScalarValue;
 pub use list::List;
 pub use r#struct::Struct;
 pub use sequence::Sequence;

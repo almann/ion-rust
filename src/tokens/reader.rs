@@ -1,8 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 
-use super::TokenSource;
+use super::{AnnotatedToken, Instruction, Token, TokenSource};
 use crate::element::{Blob, Clob};
-use crate::macros::tokens::{AnnotatedToken, Instruction, Token};
 use crate::result::illegal_operation;
 use crate::{Decimal, Int, IonReader, IonResult, IonType, Str, StreamItem, Symbol, Timestamp};
 use std::cell::RefCell;

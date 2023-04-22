@@ -192,7 +192,10 @@ mod symbol_table;
 mod system_reader;
 mod writer;
 
+// Experimental for 1.1
 mod macros;
+pub(crate) mod thunk;
+pub(crate) mod tokens;
 
 #[doc(inline)]
 pub use data_source::IonDataSource;
