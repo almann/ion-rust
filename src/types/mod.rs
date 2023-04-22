@@ -63,6 +63,34 @@ impl IonType {
     }
 }
 
+impl From<crate::macros::tokens::ScalarType> for IonType {
+    fn from(value: crate::macros::tokens::ScalarType) -> Self {
+        use crate::macros::tokens::ScalarType::*;
+        match value {
+            Bool => IonType::Bool,
+            Int => IonType::Int,
+            Float => IonType::Float,
+            Decimal => IonType::Decimal,
+            Timestamp => IonType::Timestamp,
+            String => IonType::String,
+            Symbol => IonType::Symbol,
+            Blob => IonType::Blob,
+            Clob => IonType::Clob,
+        }
+    }
+}
+
+impl From<crate::macros::tokens::ContainerType> for IonType {
+    fn from(value: crate::macros::tokens::ContainerType) -> Self {
+        use crate::macros::tokens::ContainerType::*;
+        match value {
+            SExp => IonType::SExp,
+            List => IonType::List,
+            Struct => IonType::Struct,
+        }
+    }
+}
+
 // Represents a level into which the writer has stepped.
 // A writer that has not yet called step_in() is at the top level.
 #[derive(Debug, PartialEq, Default)]

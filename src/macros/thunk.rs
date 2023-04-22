@@ -120,12 +120,11 @@ impl<'a, T> Thunk<'a, T> {
         // move out the current value
         let thunk_res = std::mem::replace(&mut self.0, illegal_operation("Empty thunk"));
         // attempt to evaluate (if possible/needed)
-        let value_res = match thunk_res {
+        match thunk_res {
             Ok(Deferred(mut func)) => func(),
             Ok(Materialized(val)) => Ok(val),
             Err(e) => Err(e),
-        };
-        return value_res;
+        }
     }
 
     /// Evaluates and sets the current value with the given one, returning the

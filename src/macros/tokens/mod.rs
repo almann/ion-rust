@@ -58,23 +58,6 @@ impl TryFrom<IonType> for ScalarType {
     }
 }
 
-impl Into<IonType> for ScalarType {
-    fn into(self) -> IonType {
-        use ScalarType::*;
-        match self {
-            Bool => IonType::Bool,
-            Int => IonType::Int,
-            Float => IonType::Float,
-            Decimal => IonType::Decimal,
-            Timestamp => IonType::Timestamp,
-            String => IonType::String,
-            Symbol => IonType::Symbol,
-            Blob => IonType::Blob,
-            Clob => IonType::Clob,
-        }
-    }
-}
-
 impl<T> From<T> for ScalarType
 where
     T: AsRef<ScalarValue>,
@@ -113,17 +96,6 @@ impl TryFrom<IonType> for ContainerType {
             IonType::List => Ok(List),
             IonType::Struct => Ok(Struct),
             _ => illegal_operation(format!("{} type is not a container", value)),
-        }
-    }
-}
-
-impl Into<IonType> for ContainerType {
-    fn into(self) -> IonType {
-        use ContainerType::*;
-        match self {
-            SExp => IonType::SExp,
-            List => IonType::List,
-            Struct => IonType::Struct,
         }
     }
 }
