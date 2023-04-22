@@ -1,3 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates.
+
 use super::{
     AnnotatedToken, AnnotationsThunk, ContainerType, FieldNameThunk, Instruction, ScalarThunk,
     ScalarType, ScalarValue, Token, TokenStream,
