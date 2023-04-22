@@ -742,6 +742,7 @@ mod tests {
     use super::*;
     use crate::data_source::ToIonDataSource;
     use crate::element::{Blob as ElemBlob, Clob as ElemClob};
+    use crate::result::illegal_operation_raw;
     use crate::{Decimal, IonError, IonResult, IonType, ReaderBuilder, Symbol};
     use rstest::rstest;
     use std::fmt::Debug;
@@ -839,6 +840,22 @@ mod tests {
         Ok(srcs)
     }
 
+    fn container_skip_src(
+        container_type: ContainerType,
+        contents: IonResult<Srcs>,
+    ) -> IonResult<Srcs> {
+        last_next_end(container_src(container_type, contents))
+    }
+
+    fn last_next_end(contents: IonResult<Srcs>) -> IonResult<Srcs> {
+        let mut srcs = contents?;
+        let (_, annotated_token) = srcs
+            .pop()
+            .ok_or(illegal_operation_raw("No last element in source to change"))?;
+        srcs.push((NextEnd, annotated_token));
+        Ok(srcs)
+    }
+
     fn field_named_srcs<C, I, S>(names: C, srcs: IonResult<Srcs>) -> IonResult<Srcs>
     where
         C: IntoIterator<Item = S, IntoIter = I>,
@@ -897,6 +914,18 @@ mod tests {
     #[case::empty_list(container_src(ContainerType::List, Ok(vec![])), "[]")]
     #[case::empty_sexp(container_src(ContainerType::SExp, Ok(vec![])), "()")]
     #[case::empty_struct(container_src(ContainerType::Struct, Ok(vec![])), "{}")]
+    #[case::list_skip_start(container_skip_src(ContainerType::List, Ok(vec![])), "[1, 2, 3, 4, 5]")]
+    #[case::sexp_skip_start(container_skip_src(ContainerType::SExp, Ok(vec![])), "(a b c d e f)")]
+    #[case::struct_skip_start(container_skip_src(ContainerType::Struct, Ok(vec![])), "{a:1, b:2}")]
+    #[case::list_skip_second(
+        container_skip_src(ContainerType::List, single_src(1)),
+        "[1, 2, 3, 4, 5]"
+    )]
+    #[case::sexp_skip_second(
+        container_skip_src(ContainerType::SExp, single_src(Symbol::from("a"))),
+        "(a b c d e f)"
+    )]
+    #[case::struct_skip_second(last_next_end(singleton_struct_src()), "{a:5, b:6, c:7}")]
     #[case::annotated(annotate_first_srcs(["a", "b", "c"], single_src(false)), "a::b::c::false")]
     fn source_test<S>(#[case] expected: IonResult<Srcs>, #[case] data: S) -> IonResult<()>
     where
