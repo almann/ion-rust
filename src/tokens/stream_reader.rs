@@ -7,10 +7,6 @@ use crate::tokens::ScalarValue;
 use crate::{Decimal, Int, IonReader, IonResult, IonType, Str, StreamItem, Symbol, Timestamp};
 use std::cell::RefCell;
 
-const STEP_IN_ERROR_TEXT: &str = "Cannot step in, not at start of container";
-const STEP_OUT_ERROR_TEXT: &str = "Cannot step out, not in a container";
-const NO_FIELD_NAME_ERROR_TEXT: &str = "No field name";
-
 /// Adapts any [`TokenStream`] into an [`IonReader`].
 ///
 /// It is important to note that adapting a stream in the middle of a container stream
@@ -66,8 +62,11 @@ where
     }
 }
 
-const NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT: &'static str = "Not positioned on anything";
-const CANNOT_READ_NON_SCALAR_ERROR_TEXT: &'static str = "Cannot read from non-scalar";
+const STEP_IN_ERROR_TEXT: &str = "Cannot step in, not at start of container";
+const STEP_OUT_ERROR_TEXT: &str = "Cannot step out, not in a container";
+const NO_FIELD_NAME_ERROR_TEXT: &str = "No field name";
+const NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT: &str = "Not positioned on anything";
+const CANNOT_READ_NON_SCALAR_ERROR_TEXT: &str = "Cannot read from non-scalar";
 
 impl<'a, T> IonReader for TokenStreamReader<'a, T>
 where
