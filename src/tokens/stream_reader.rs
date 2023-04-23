@@ -73,9 +73,9 @@ where
     type Symbol = Symbol;
 
     fn ion_version(&self) -> (u8, u8) {
-        // FIXME this is clearly wrong, but not sure about this API in general...
-        // XXX we just fake 1.1 for now because that is the context we're operating in...
-        (1, 1)
+        // XXX A `TokenStream` doesn't know its underlying Ion version, we just say 1.0
+        //     because all Ion 1.x versions have the same data model.
+        (1, 0)
     }
 
     fn next(&mut self) -> IonResult<Self::Item> {
