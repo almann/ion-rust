@@ -1,10 +1,14 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 
-use super::{AnnotatedToken, Instruction, Token, TokenStream};
+use super::{AnnotatedToken, ContainerType, Instruction, Token, TokenStream};
 use crate::element::{Blob, Clob};
 use crate::result::illegal_operation;
 use crate::{Decimal, Int, IonReader, IonResult, IonType, Str, StreamItem, Symbol, Timestamp};
 use std::cell::RefCell;
+
+const STEP_IN_ERROR_TEXT: &str = "Cannot step in, not at start of container";
+const STEP_OUT_ERROR_TEXT: &str = "Cannot step out, not in a container";
+const NO_FIELD_NAME_ERROR_TEXT: &str = "No field name";
 
 /// Adapts any [`TokenStream`] into an [`IonReader`].
 ///
@@ -16,7 +20,8 @@ where
     T: TokenStream<'a>,
 {
     stream: T,
-    depth: usize,
+    /// Models what containers we
+    container_stack: Vec<ContainerType>,
 
     // XXX this is a RefCell<AnnotationToken> because we need interior mutability for memoization
     /// the current token
@@ -26,6 +31,26 @@ where
     curr_item: StreamItem,
 }
 
+impl<'a, T> TokenStreamReader<'a, T>
+where
+    T: TokenStream<'a>,
+{
+    /// Advances the stream, setting the current token and item.
+    fn next_token(&mut self, instruction: Instruction) -> IonResult<StreamItem> {
+        let annotated_token = self.stream.next_token(instruction)?;
+        let item = match &annotated_token.token {
+            Token::Null(ion_type) => StreamItem::Null(*ion_type),
+            Token::Scalar(thunk) => StreamItem::Value(thunk.scalar_type().into()),
+            Token::StartContainer(container_type) => StreamItem::Value((*container_type).into()),
+            Token::EndContainer(_) => StreamItem::Nothing,
+            Token::EndStream => StreamItem::Nothing,
+        };
+        self.curr_item = item;
+        self.curr_token_cell = Some(RefCell::new(annotated_token));
+        Ok(item)
+    }
+}
+
 impl<'a, T> From<T> for TokenStreamReader<'a, T>
 where
     T: TokenStream<'a>,
@@ -33,7 +58,7 @@ where
     fn from(stream: T) -> Self {
         TokenStreamReader {
             stream,
-            depth: 0,
+            container_stack: vec![],
             curr_token_cell: None,
             curr_item: StreamItem::Nothing,
         }
@@ -61,17 +86,7 @@ where
                 return Ok(StreamItem::Nothing);
             }
         }
-        let annotated_token = self.stream.next_token(Instruction::Next)?;
-        let item = match &annotated_token.token {
-            Token::Null(ion_type) => StreamItem::Null(*ion_type),
-            Token::Scalar(thunk) => StreamItem::Value(thunk.scalar_type().into()),
-            Token::StartContainer(container_type) => StreamItem::Value((*container_type).into()),
-            Token::EndContainer(_) => StreamItem::Nothing,
-            Token::EndStream => StreamItem::Nothing,
-        };
-        self.curr_item = item;
-        self.curr_token_cell = Some(RefCell::new(annotated_token));
-        Ok(item)
+        self.next_token(Instruction::Next)
     }
 
     fn current(&self) -> Self::Item {
@@ -103,12 +118,12 @@ where
 
     fn field_name(&self) -> IonResult<Self::Symbol> {
         match &self.curr_token_cell {
-            None => illegal_operation("No field name"),
+            None => illegal_operation(NO_FIELD_NAME_ERROR_TEXT),
             Some(token_cell) => {
                 let mut annotated_token = token_cell.borrow_mut();
                 match annotated_token.share_field_name() {
                     Ok(Some(symbol)) => Ok(symbol),
-                    Ok(None) => illegal_operation("No field name"),
+                    Ok(None) => illegal_operation(NO_FIELD_NAME_ERROR_TEXT),
                     Err(e) => Err(e),
                 }
             }
@@ -116,7 +131,7 @@ where
     }
 
     fn is_null(&self) -> bool {
-        todo!()
+        matches!(self.curr_item, StreamItem::Null(_))
     }
 
     fn read_null(&mut self) -> IonResult<IonType> {
@@ -172,18 +187,44 @@ where
     }
 
     fn step_in(&mut self) -> IonResult<()> {
-        todo!()
+        match &self.curr_token_cell {
+            None => illegal_operation(STEP_IN_ERROR_TEXT),
+            Some(token_cell) => {
+                let annotated_token = token_cell.borrow();
+                match annotated_token.token() {
+                    Token::StartContainer(container_type) => {
+                        // position the item over nothing
+                        self.curr_item = StreamItem::Nothing;
+                        // push container context
+                        self.container_stack.push(*container_type);
+                        Ok(())
+                    }
+                    _ => illegal_operation(STEP_IN_ERROR_TEXT),
+                }
+            }
+        }
     }
 
     fn step_out(&mut self) -> IonResult<()> {
-        todo!()
+        // pop container context
+        match self.container_stack.pop() {
+            Some(_) => {
+                // advance stream to the end of the container
+                self.next_token(Instruction::NextEnd)?;
+                Ok(())
+            }
+            None => illegal_operation(STEP_OUT_ERROR_TEXT),
+        }
     }
 
     fn parent_type(&self) -> Option<IonType> {
-        todo!()
+        match self.container_stack.last() {
+            Some(container_type) => Some((*container_type).into()),
+            None => None,
+        }
     }
 
     fn depth(&self) -> usize {
-        todo!()
+        self.container_stack.len()
     }
 }
