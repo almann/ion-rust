@@ -68,6 +68,46 @@ const NO_FIELD_NAME_ERROR_TEXT: &str = "No field name";
 const NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT: &str = "Not positioned on anything";
 const CANNOT_READ_NON_SCALAR_ERROR_TEXT: &str = "Cannot read from non-scalar";
 
+// FIXME make it so we don't have to copy/paste the read methods
+
+// macro_rules! read_type {
+//     ($variant:ident, $scalar:ident,$read_exp:expr) => {
+//         match &self.curr_token_cell {
+//             None => illegal_operation(NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT),
+//             Some(token_cell) => {
+//                 let mut annotated_token = token_cell.borrow_mut();
+//                 match annotated_token.token_mut().no_memoize_scalar() {
+//                     Ok(Some(ScalarValue::$variant($scalar))) => Ok($read_exp),
+//                     Ok(Some(scalar_value)) => illegal_operation(format!(
+//                         "Cannot read bool from {}",
+//                         scalar_value.scalar_type()
+//                     )),
+//                     Ok(None) => illegal_operation(CANNOT_READ_NON_SCALAR_ERROR_TEXT),
+//                     Err(e) => Err(e),
+//                 }
+//             }
+//         }
+//     };
+// }
+
+// fn read_bool(&mut self) -> IonResult<bool> {
+//     match &self.curr_token_cell {
+//         None => illegal_operation(NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT),
+//         Some(token_cell) => {
+//             let mut annotated_token = token_cell.borrow_mut();
+//             match annotated_token.token_mut().no_memoize_scalar() {
+//                 Ok(Some(ScalarValue::Bool(bool))) => Ok(bool),
+//                 Ok(Some(scalar_value)) => illegal_operation(format!(
+//                     "Cannot read bool from {}",
+//                     scalar_value.scalar_type()
+//                 )),
+//                 Ok(None) => illegal_operation(CANNOT_READ_NON_SCALAR_ERROR_TEXT),
+//                 Err(e) => Err(e),
+//             }
+//         }
+//     }
+// }
+
 impl<'a, T> IonReader for TokenStreamReader<'a, T>
 where
     T: TokenStream<'a>,
@@ -152,8 +192,8 @@ where
             None => illegal_operation(NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT),
             Some(token_cell) => {
                 let mut annotated_token = token_cell.borrow_mut();
-                match annotated_token.token_mut().memoize_scalar() {
-                    Ok(Some(ScalarValue::Bool(bool))) => Ok(*bool),
+                match annotated_token.token_mut().no_memoize_scalar() {
+                    Ok(Some(ScalarValue::Bool(bool))) => Ok(bool),
                     Ok(Some(scalar_value)) => illegal_operation(format!(
                         "Cannot read bool from {}",
                         scalar_value.scalar_type()

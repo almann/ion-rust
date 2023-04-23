@@ -226,6 +226,12 @@ impl<'a> ScalarThunk<'a> {
         self.1.memoize()
     }
 
+    /// Evaluates the ccurrent values and moves it out of the value without materializing.
+    /// See [`Thunk::no_memoize`] for details
+    pub fn no_memoize(&mut self) -> IonResult<ScalarValue> {
+        self.1.no_memoize()
+    }
+
     /// Returns the current thunk state.
     pub fn thunk_state(&self) -> ThunkState {
         self.1.thunk_state()
@@ -272,6 +278,17 @@ impl<'a> Token<'a> {
     pub fn memoize_scalar(&mut self) -> IonResult<Option<&ScalarValue>> {
         if let Token::Scalar(thunk) = self {
             Ok(Some(thunk.memoize()?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// In-place evaluation without memoization of this token returning the value of the underlying
+    /// scalar if applicable.  Will clone if this is backed as a materialized value.
+    /// See [`Thunk::no_memoize`] for details.
+    pub fn no_memoize_scalar(&mut self) -> IonResult<Option<ScalarValue>> {
+        if let Token::Scalar(thunk) = self {
+            Ok(Some(thunk.no_memoize()?))
         } else {
             Ok(None)
         }
