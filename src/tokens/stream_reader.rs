@@ -69,6 +69,8 @@ const NO_FIELD_NAME_ERROR_TEXT: &str = "No field name";
 const NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT: &str = "Not positioned on anything";
 const CANNOT_READ_NON_SCALAR_ERROR_TEXT: &str = "Cannot read from non-scalar";
 
+/// Generates the read methods against the underlying token/item state.
+/// This eliminates the boilerplate around each definition avoiding a lot of copy/paste.
 macro_rules! read_method {
     ($method:ident, $scalar_type:ty, $variant:ident, $scalar:ident,$scalar_exp:expr) => {
         fn $method(&mut self) -> IonResult<$scalar_type> {
