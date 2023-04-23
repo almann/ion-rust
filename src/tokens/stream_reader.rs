@@ -3,6 +3,7 @@
 use super::{AnnotatedToken, ContainerType, Instruction, Token, TokenStream};
 use crate::element::{Blob, Clob};
 use crate::result::illegal_operation;
+use crate::tokens::ScalarValue;
 use crate::{Decimal, Int, IonReader, IonResult, IonType, Str, StreamItem, Symbol, Timestamp};
 use std::cell::RefCell;
 
@@ -64,6 +65,9 @@ where
         }
     }
 }
+
+const NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT: &'static str = "Not positioned on anything";
+const CANNOT_READ_NON_SCALAR_ERROR_TEXT: &'static str = "Cannot read from non-scalar";
 
 impl<'a, T> IonReader for TokenStreamReader<'a, T>
 where
@@ -135,11 +139,31 @@ where
     }
 
     fn read_null(&mut self) -> IonResult<IonType> {
-        todo!()
+        match &self.curr_item {
+            StreamItem::Null(ion_type) => Ok(*ion_type),
+            StreamItem::Value(ion_type) => {
+                illegal_operation(format!("Cannot read null for {} value", ion_type))
+            }
+            StreamItem::Nothing => illegal_operation("Cannot read null on nothing"),
+        }
     }
 
     fn read_bool(&mut self) -> IonResult<bool> {
-        todo!()
+        match &self.curr_token_cell {
+            None => illegal_operation(NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT),
+            Some(token_cell) => {
+                let mut annotated_token = token_cell.borrow_mut();
+                match annotated_token.token_mut().memoize_scalar() {
+                    Ok(Some(ScalarValue::Bool(bool))) => Ok(*bool),
+                    Ok(Some(scalar_value)) => illegal_operation(format!(
+                        "Cannot read bool from {}",
+                        scalar_value.scalar_type()
+                    )),
+                    Ok(None) => illegal_operation(CANNOT_READ_NON_SCALAR_ERROR_TEXT),
+                    Err(e) => Err(e),
+                }
+            }
+        }
     }
 
     fn read_i64(&mut self) -> IonResult<i64> {

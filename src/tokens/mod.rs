@@ -18,6 +18,15 @@ use std::fmt::{Display, Formatter};
 pub(crate) mod reader_stream;
 pub(crate) mod stream_reader;
 
+/// Generic display for anything that could be converted to `IonType`.
+fn display_type<T>(value: T, f: &mut Formatter<'_>) -> std::fmt::Result
+where
+    T: Into<IonType>,
+{
+    let ion_type: IonType = value.into();
+    write!(f, "{}", ion_type)
+}
+
 /// Subset of [`IonType`] that are strictly the non-null, non-container types.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ScalarType {
@@ -30,6 +39,12 @@ pub enum ScalarType {
     Symbol,
     Blob,
     Clob,
+}
+
+impl Display for ScalarType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        display_type(*self, f)
+    }
 }
 
 impl TryFrom<IonType> for ScalarType {
@@ -96,8 +111,7 @@ impl TryFrom<IonType> for ContainerType {
 
 impl Display for ContainerType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let ion_type: IonType = (*self).into();
-        write!(f, "{}", ion_type)
+        display_type(*self, f)
     }
 }
 
@@ -362,6 +376,13 @@ impl<'a> AnnotatedToken<'a> {
     /// Specifically things like if it is a value/container delimiters/null.
     pub fn token(&self) -> &Token<'a> {
         &self.token
+    }
+
+    /// Returns a mutable reference to the underlying token for this decorated one.
+    ///
+    /// This is useful for in-place evaluation/materialization of the underlying value.
+    pub fn token_mut(&mut self) -> &mut Token<'a> {
+        &mut self.token
     }
 
     /// Consume this annotated token into one that owns its content.
