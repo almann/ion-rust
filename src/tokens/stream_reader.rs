@@ -2,8 +2,9 @@
 
 use super::{AnnotatedToken, ContainerType, Instruction, Token, TokenStream};
 use crate::element::{Blob, Clob};
-use crate::result::illegal_operation;
+use crate::result::{illegal_operation, illegal_operation_raw};
 use crate::tokens::ScalarValue;
+use crate::types::integer::IntAccess;
 use crate::{Decimal, Int, IonReader, IonResult, IonType, Str, StreamItem, Symbol, Timestamp};
 use std::cell::RefCell;
 
@@ -68,45 +69,27 @@ const NO_FIELD_NAME_ERROR_TEXT: &str = "No field name";
 const NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT: &str = "Not positioned on anything";
 const CANNOT_READ_NON_SCALAR_ERROR_TEXT: &str = "Cannot read from non-scalar";
 
-// FIXME make it so we don't have to copy/paste the read methods
-
-// macro_rules! read_type {
-//     ($variant:ident, $scalar:ident,$read_exp:expr) => {
-//         match &self.curr_token_cell {
-//             None => illegal_operation(NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT),
-//             Some(token_cell) => {
-//                 let mut annotated_token = token_cell.borrow_mut();
-//                 match annotated_token.token_mut().no_memoize_scalar() {
-//                     Ok(Some(ScalarValue::$variant($scalar))) => Ok($read_exp),
-//                     Ok(Some(scalar_value)) => illegal_operation(format!(
-//                         "Cannot read bool from {}",
-//                         scalar_value.scalar_type()
-//                     )),
-//                     Ok(None) => illegal_operation(CANNOT_READ_NON_SCALAR_ERROR_TEXT),
-//                     Err(e) => Err(e),
-//                 }
-//             }
-//         }
-//     };
-// }
-
-// fn read_bool(&mut self) -> IonResult<bool> {
-//     match &self.curr_token_cell {
-//         None => illegal_operation(NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT),
-//         Some(token_cell) => {
-//             let mut annotated_token = token_cell.borrow_mut();
-//             match annotated_token.token_mut().no_memoize_scalar() {
-//                 Ok(Some(ScalarValue::Bool(bool))) => Ok(bool),
-//                 Ok(Some(scalar_value)) => illegal_operation(format!(
-//                     "Cannot read bool from {}",
-//                     scalar_value.scalar_type()
-//                 )),
-//                 Ok(None) => illegal_operation(CANNOT_READ_NON_SCALAR_ERROR_TEXT),
-//                 Err(e) => Err(e),
-//             }
-//         }
-//     }
-// }
+macro_rules! read_method {
+    ($method:ident, $scalar_type:ty, $variant:ident, $scalar:ident,$scalar_exp:expr) => {
+        fn $method(&mut self) -> IonResult<$scalar_type> {
+            match &self.curr_token_cell {
+                None => illegal_operation(NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT),
+                Some(token_cell) => {
+                    let mut annotated_token = token_cell.borrow_mut();
+                    match annotated_token.token_mut().no_memoize_scalar() {
+                        Ok(Some(ScalarValue::$variant($scalar))) => Ok($scalar_exp),
+                        Ok(Some(scalar_value)) => illegal_operation(format!(
+                            concat!("Cannot read ", stringify!($scalar_type), " from {}"),
+                            scalar_value.scalar_type()
+                        )),
+                        Ok(None) => illegal_operation(CANNOT_READ_NON_SCALAR_ERROR_TEXT),
+                        Err(e) => Err(e),
+                    }
+                }
+            }
+        }
+    };
+}
 
 impl<'a, T> IonReader for TokenStreamReader<'a, T>
 where
@@ -187,65 +170,29 @@ where
         }
     }
 
-    fn read_bool(&mut self) -> IonResult<bool> {
-        match &self.curr_token_cell {
-            None => illegal_operation(NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT),
-            Some(token_cell) => {
-                let mut annotated_token = token_cell.borrow_mut();
-                match annotated_token.token_mut().no_memoize_scalar() {
-                    Ok(Some(ScalarValue::Bool(bool))) => Ok(bool),
-                    Ok(Some(scalar_value)) => illegal_operation(format!(
-                        "Cannot read bool from {}",
-                        scalar_value.scalar_type()
-                    )),
-                    Ok(None) => illegal_operation(CANNOT_READ_NON_SCALAR_ERROR_TEXT),
-                    Err(e) => Err(e),
-                }
-            }
-        }
-    }
+    read_method!(read_bool, bool, Bool, boolean, boolean);
+    read_method!(
+        read_i64,
+        i64,
+        Int,
+        integer,
+        integer
+            .as_i64()
+            .ok_or_else(|| illegal_operation_raw("Integer too large for i64"))?
+    );
+    read_method!(read_int, Int, Int, integer, integer);
+    read_method!(read_f32, f32, Float, float, float as f32);
+    read_method!(read_f64, f64, Float, float, float);
+    read_method!(read_decimal, Decimal, Decimal, decimal, decimal);
+    read_method!(read_string, Str, String, string, string);
+    read_method!(read_symbol, Symbol, Symbol, symbol, symbol);
+    read_method!(read_blob, Blob, Blob, blob, Blob(blob));
+    read_method!(read_clob, Clob, Clob, clob, Clob(clob));
+    read_method!(read_timestamp, Timestamp, Timestamp, timestamp, timestamp);
 
-    fn read_i64(&mut self) -> IonResult<i64> {
-        todo!()
-    }
-
-    fn read_int(&mut self) -> IonResult<Int> {
-        todo!()
-    }
-
-    fn read_f32(&mut self) -> IonResult<f32> {
-        todo!()
-    }
-
-    fn read_f64(&mut self) -> IonResult<f64> {
-        todo!()
-    }
-
-    fn read_decimal(&mut self) -> IonResult<Decimal> {
-        todo!()
-    }
-
-    fn read_string(&mut self) -> IonResult<Str> {
-        todo!()
-    }
+    // TODO make a variant of the read_method! macro for read_str
 
     fn read_str(&mut self) -> IonResult<&str> {
-        todo!()
-    }
-
-    fn read_symbol(&mut self) -> IonResult<Self::Symbol> {
-        todo!()
-    }
-
-    fn read_blob(&mut self) -> IonResult<Blob> {
-        todo!()
-    }
-
-    fn read_clob(&mut self) -> IonResult<Clob> {
-        todo!()
-    }
-
-    fn read_timestamp(&mut self) -> IonResult<Timestamp> {
         todo!()
     }
 
