@@ -90,6 +90,26 @@ where
     phantom: PhantomData<&'a R>,
 }
 
+/// These generate the methods that produce lazy tokens for our stream against the underlying
+/// reader.  There is a lot of boilerplate and variants so this avoids copy/paste errors.
+macro_rules! scalar_token_method {
+    ($name:ident, $scalar_variant:ident, $reader:ident, $read_expr:expr) => {
+        #[inline]
+        fn $name(&mut self) -> Token<'a> {
+            let reader_cell = Rc::clone(&self.reader_cell);
+            ScalarThunk(
+                ScalarType::$scalar_variant,
+                Thunk::defer(move || {
+                    let mut underlying = reader_cell.borrow_mut();
+                    let $reader = underlying.try_mut_ref()?;
+                    Ok(ScalarValue::$scalar_variant($read_expr))
+                }),
+            )
+            .into()
+        }
+    };
+}
+
 impl<'a, R> ReaderTokenStream<'a, R>
 where
     R: IonReader<Item = StreamItem, Symbol = Symbol> + 'a,
@@ -113,131 +133,15 @@ where
         }
     }
 
-    #[inline]
-    fn bool_token(&mut self) -> Token<'a> {
-        let reader_cell = Rc::clone(&self.reader_cell);
-        ScalarThunk(
-            ScalarType::Bool,
-            Thunk::defer(move || {
-                let mut underlying = reader_cell.borrow_mut();
-                let reader = underlying.try_mut_ref()?;
-                Ok(ScalarValue::Bool(reader.read_bool()?))
-            }),
-        )
-        .into()
-    }
-
-    #[inline]
-    fn int_token(&mut self) -> Token<'a> {
-        let reader_cell = Rc::clone(&self.reader_cell);
-        ScalarThunk(
-            ScalarType::Int,
-            Thunk::defer(move || {
-                let mut underlying = reader_cell.borrow_mut();
-                let reader = underlying.try_mut_ref()?;
-                Ok(ScalarValue::Int(reader.read_int()?))
-            }),
-        )
-        .into()
-    }
-
-    #[inline]
-    fn float_token(&mut self) -> Token<'a> {
-        let reader_cell = Rc::clone(&self.reader_cell);
-        ScalarThunk(
-            ScalarType::Float,
-            Thunk::defer(move || {
-                let mut underlying = reader_cell.borrow_mut();
-                let reader = underlying.try_mut_ref()?;
-                Ok(ScalarValue::Float(reader.read_f64()?))
-            }),
-        )
-        .into()
-    }
-
-    #[inline]
-    fn decimal_token(&mut self) -> Token<'a> {
-        let reader_cell = Rc::clone(&self.reader_cell);
-        ScalarThunk(
-            ScalarType::Decimal,
-            Thunk::defer(move || {
-                let mut underlying = reader_cell.borrow_mut();
-                let reader = underlying.try_mut_ref()?;
-                Ok(ScalarValue::Decimal(reader.read_decimal()?))
-            }),
-        )
-        .into()
-    }
-
-    #[inline]
-    fn timestamp_token(&mut self) -> Token<'a> {
-        let reader_cell = Rc::clone(&self.reader_cell);
-        ScalarThunk(
-            ScalarType::Timestamp,
-            Thunk::defer(move || {
-                let mut underlying = reader_cell.borrow_mut();
-                let reader = underlying.try_mut_ref()?;
-                Ok(ScalarValue::Timestamp(reader.read_timestamp()?))
-            }),
-        )
-        .into()
-    }
-
-    #[inline]
-    fn string_token(&mut self) -> Token<'a> {
-        let reader_cell = Rc::clone(&self.reader_cell);
-        ScalarThunk(
-            ScalarType::String,
-            Thunk::defer(move || {
-                let mut underlying = reader_cell.borrow_mut();
-                let reader = underlying.try_mut_ref()?;
-                Ok(ScalarValue::String(reader.read_string()?))
-            }),
-        )
-        .into()
-    }
-
-    #[inline]
-    fn symbol_token(&mut self) -> Token<'a> {
-        let reader_cell = Rc::clone(&self.reader_cell);
-        ScalarThunk(
-            ScalarType::Symbol,
-            Thunk::defer(move || {
-                let mut underlying = reader_cell.borrow_mut();
-                let reader = underlying.try_mut_ref()?;
-                Ok(ScalarValue::Symbol(reader.read_symbol()?))
-            }),
-        )
-        .into()
-    }
-
-    #[inline]
-    fn blob_token(&mut self) -> Token<'a> {
-        let reader_cell = Rc::clone(&self.reader_cell);
-        ScalarThunk(
-            ScalarType::Blob,
-            Thunk::defer(move || {
-                let mut underlying = reader_cell.borrow_mut();
-                let reader = underlying.try_mut_ref()?;
-                Ok(ScalarValue::Blob(reader.read_blob()?.into()))
-            }),
-        )
-        .into()
-    }
-
-    #[inline]
-    fn clob_token(&mut self) -> Token<'a> {
-        let reader_cell = Rc::clone(&self.reader_cell);
-        ScalarThunk(
-            ScalarType::Clob,
-            Thunk::defer(move || {
-                let mut underlying = reader_cell.borrow_mut();
-                let reader = underlying.try_mut_ref()?;
-                Ok(ScalarValue::Clob(reader.read_clob()?.into()))
-            }),
-        )
-        .into()
-    }
+    scalar_token_method!(bool_token, Bool, reader, reader.read_bool()?);
+    scalar_token_method!(int_token, Int, reader, reader.read_int()?);
+    scalar_token_method!(float_token, Float, reader, reader.read_f64()?);
+    scalar_token_method!(decimal_token, Decimal, reader, reader.read_decimal()?);
+    scalar_token_method!(timestamp_token, Timestamp, reader, reader.read_timestamp()?);
+    scalar_token_method!(string_token, String, reader, reader.read_string()?);
+    scalar_token_method!(symbol_token, Symbol, reader, reader.read_symbol()?);
+    scalar_token_method!(blob_token, Blob, reader, reader.read_blob()?.into());
+    scalar_token_method!(clob_token, Clob, reader, reader.read_clob()?.into());
 
     #[inline]
     fn invalidate_token(&mut self) {
