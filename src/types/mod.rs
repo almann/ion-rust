@@ -63,7 +63,7 @@ impl IonType {
     }
 }
 
-#[cfg(feature = "experimental")]
+#[cfg(feature = "experimental-streaming")]
 impl From<crate::tokens::ScalarType> for IonType {
     fn from(value: crate::tokens::ScalarType) -> Self {
         use crate::tokens::ScalarType::*;
@@ -81,7 +81,7 @@ impl From<crate::tokens::ScalarType> for IonType {
     }
 }
 
-#[cfg(feature = "experimental")]
+#[cfg(feature = "experimental-streaming")]
 impl From<crate::tokens::ContainerType> for IonType {
     fn from(value: crate::tokens::ContainerType) -> Self {
         use crate::tokens::ContainerType::*;

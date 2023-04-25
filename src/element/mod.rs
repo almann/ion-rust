@@ -43,9 +43,6 @@ pub use r#struct::Struct;
 pub use sequence::Sequence;
 pub use sexp::SExp;
 
-#[cfg(feature = "experimental")]
-use crate::tokens::ScalarValue;
-
 impl IonEq for Value {
     fn ion_eq(&self, other: &Self) -> bool {
         use Value::*;
@@ -221,9 +218,10 @@ impl From<Struct> for Value {
     }
 }
 
-#[cfg(feature = "experimental")]
-impl From<ScalarValue> for Value {
-    fn from(value: ScalarValue) -> Self {
+#[cfg(feature = "experimental-streaming")]
+impl From<crate::tokens::ScalarValue> for Value {
+    fn from(value: crate::tokens::ScalarValue) -> Self {
+        use crate::tokens::ScalarValue;
         match value {
             ScalarValue::Bool(bool) => Value::Bool(bool),
             ScalarValue::Int(int) => Value::Int(int),
