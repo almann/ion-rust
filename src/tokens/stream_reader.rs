@@ -27,6 +27,10 @@ where
 
     /// remember the current read item
     curr_item: StreamItem,
+
+    /// memory set aside to support `read_str` since we cannot safely return a reference into the
+    /// `RefCell` that holds the token without wrapping it in a `Ref`.
+    str_buf: Str,
 }
 
 impl<'a, T> TokenStreamReader<'a, T>
@@ -59,6 +63,7 @@ where
             container_stack: vec![],
             curr_token_cell: None,
             curr_item: StreamItem::Nothing,
+            str_buf: Str::from(""),
         }
     }
 }
@@ -71,10 +76,17 @@ const CANNOT_READ_NON_SCALAR_ERROR_TEXT: &str = "Cannot read from non-scalar";
 
 /// Generates the read methods against the underlying token/item state.
 /// This eliminates the boilerplate around each definition avoiding a lot of copy/paste.
-macro_rules! read_method {
-    ($method:ident, $scalar_type:ty, $variant:ident, $scalar:ident,$scalar_exp:expr) => {
-        fn $method(&mut self) -> IonResult<$scalar_type> {
-            match &self.curr_token_cell {
+///
+/// * `me` - the identifier for `self` to make it visible to `scalar_exp`.
+/// * `method` - the name of the method.
+/// * `scalar_type` - the return type for the method.
+/// * `variant` - the unqualified variant of [`ScalarValue`] to match over the current token.
+/// * `scalar` - the matched identifier of the contents of [`ScalarValue`].
+/// * `scalar_exp` - the expression to generate the return value.
+macro_rules! read_method_self {
+    ($me:ident, $method:ident, $scalar_type:ty, $variant:ident, $scalar:ident, $scalar_exp:expr) => {
+        fn $method(&mut $me) -> IonResult<$scalar_type> {
+            match &$me.curr_token_cell {
                 None => illegal_operation(NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT),
                 Some(token_cell) => {
                     let mut annotated_token = token_cell.borrow_mut();
@@ -90,6 +102,13 @@ macro_rules! read_method {
                 }
             }
         }
+    };
+}
+
+/// Shorthand for `read_method_self` where we do not need to capture `self` in the expression.
+macro_rules! read_method {
+    ($method:ident, $scalar_type:ty, $variant:ident, $scalar:ident, $scalar_exp:expr) => {
+        read_method_self!(self, $method, $scalar_type, $variant, $scalar, $scalar_exp);
     };
 }
 
@@ -187,16 +206,15 @@ where
     read_method!(read_f64, f64, Float, float, float);
     read_method!(read_decimal, Decimal, Decimal, decimal, decimal);
     read_method!(read_string, Str, String, string, string);
+    read_method_self!(self, read_str, &str, String, string, {
+        // XXX we need to keep the computed value in our own memory
+        self.str_buf = string;
+        self.str_buf.text()
+    });
     read_method!(read_symbol, Symbol, Symbol, symbol, symbol);
     read_method!(read_blob, Blob, Blob, blob, Blob(blob));
     read_method!(read_clob, Clob, Clob, clob, Clob(clob));
     read_method!(read_timestamp, Timestamp, Timestamp, timestamp, timestamp);
-
-    // TODO make a variant of the read_method! macro for read_str
-
-    fn read_str(&mut self) -> IonResult<&str> {
-        todo!()
-    }
 
     fn step_in(&mut self) -> IonResult<()> {
         match &self.curr_token_cell {
