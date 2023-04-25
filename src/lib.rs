@@ -193,15 +193,15 @@ mod symbol_table;
 mod system_reader;
 mod writer;
 
+// Experimental Streaming APIs
 #[cfg(feature = "experimental-streaming")]
 pub(crate) mod thunk;
-
-// Experimental for Ion 1.1
-
-#[cfg(feature = "experimental")]
-pub(crate) mod macros;
-#[cfg(feature = "experimental")]
+#[cfg(feature = "experimental-streaming")]
 pub(crate) mod tokens;
+
+// Experimental Ion 1.1 APIs
+#[cfg(feature = "experimental-ion11")]
+pub(crate) mod macros;
 
 #[doc(inline)]
 pub use data_source::IonDataSource;
