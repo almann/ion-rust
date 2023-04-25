@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 
-//! Provides a simple token-like, iterator API over [`IonReader`].
+//! Provides a simple stream API bi-directionally over [`IonReader`](crate::IonReader).
 //!
 //! Conceptually [`TokenStream`] can be thought of as a continuation of the computation of
 //! an Ion data stream.  This is useful for composing and transforming over streams of Ion data.
@@ -473,15 +473,16 @@ pub trait TokenStream<'a> {
     ///
     /// Note that the lifetime of the resulting token is not bound to the lifetime of the borrow
     /// in the method.  This is because it may be the case that the token needs to be used
-    /// outside of this context, particularly if adapting a stream to an [`IonReader`][1] where
-    /// the borrow of [`next`] is disassociated from a `read_XXX` method, the [`field_name`][2]
-    /// method, or the [`annotations`][3] method.
+    /// outside of this context, particularly if adapting a stream to an [`IonReader`][reader] where
+    /// the borrow of [`next`][next] is disassociated from a `read_XXX` method, the
+    /// [`field_name`][field_name] method, or the [`annotations`][annotations] method.
     ///
     /// Returns that token or an error if there is some problem with the underlying stream.
     ///
-    /// [1]: crate::IonReader
-    /// [2]: crate::IonReader::field_name
-    /// [3]: crate::IonReader::annotations
+    /// [reader]: crate::IonReader
+    /// [field_name]: crate::IonReader::field_name
+    /// [next]: crate::IonReader::next
+    /// [annotations]: crate::IonReader::annotations
     fn next_token(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken<'a>>;
 }
 
