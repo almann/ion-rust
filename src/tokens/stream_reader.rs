@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 
 use super::{ContainerType, Content, Instruction, Token, TokenStream};
-use crate::element::{Blob, Clob};
+use crate::element::{Annotations, Blob, Clob};
 use crate::result::{illegal_operation, illegal_operation_raw};
 use crate::tokens::ScalarValue;
 use crate::types::integer::IntAccess;
@@ -160,7 +160,21 @@ where
     }
 
     fn annotations<'b>(&'b self) -> Box<dyn Iterator<Item = IonResult<Self::Symbol>> + 'b> {
-        todo!()
+        let iter = match &self.curr_token_cell {
+            None => Annotations::empty().into_iter(),
+            Some(token_cell) => {
+                let mut token = token_cell.borrow_mut();
+                let annotations_result = token.annotations.no_memoize();
+                match annotations_result {
+                    Ok(annotations) => annotations.into_iter(),
+                    Err(e) => {
+                        // if this happens we return a singleton error
+                        return Box::new([Err(e)].into_iter());
+                    }
+                }
+            }
+        };
+        Box::new(iter.map(|s| Ok(s)))
     }
 
     fn field_name(&self) -> IonResult<Self::Symbol> {
