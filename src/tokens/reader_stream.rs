@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 
 use super::{
-    AnnotatedToken, AnnotationsThunk, ContainerType, FieldNameThunk, Instruction, ScalarThunk,
-    ScalarType, ScalarValue, Token, TokenStream,
+    AnnotatedToken, AnnotationsThunk, ContainerType, Content, FieldNameThunk, Instruction,
+    ScalarThunk, ScalarType, ScalarValue, TokenStream,
 };
 use crate::result::illegal_operation;
 use crate::thunk::Thunk;
@@ -90,12 +90,12 @@ where
     phantom: PhantomData<&'a R>,
 }
 
-/// These generate the methods that produce lazy tokens for our stream against the underlying
+/// These generate the methods that produce lazy content for our stream against the underlying
 /// reader.  There is a lot of boilerplate and variants so this avoids copy/paste errors.
-macro_rules! scalar_token_method {
+macro_rules! scalar_content_method {
     ($name:ident, $scalar_variant:ident, $reader:ident, $read_expr:expr) => {
         #[inline]
-        fn $name(&mut self) -> Token<'a> {
+        fn $name(&mut self) -> Content<'a> {
             let reader_cell = Rc::clone(&self.reader_cell);
             ScalarThunk(
                 ScalarType::$scalar_variant,
@@ -133,15 +133,15 @@ where
         }
     }
 
-    scalar_token_method!(bool_token, Bool, reader, reader.read_bool()?);
-    scalar_token_method!(int_token, Int, reader, reader.read_int()?);
-    scalar_token_method!(float_token, Float, reader, reader.read_f64()?);
-    scalar_token_method!(decimal_token, Decimal, reader, reader.read_decimal()?);
-    scalar_token_method!(timestamp_token, Timestamp, reader, reader.read_timestamp()?);
-    scalar_token_method!(string_token, String, reader, reader.read_string()?);
-    scalar_token_method!(symbol_token, Symbol, reader, reader.read_symbol()?);
-    scalar_token_method!(blob_token, Blob, reader, reader.read_blob()?.into());
-    scalar_token_method!(clob_token, Clob, reader, reader.read_clob()?.into());
+    scalar_content_method!(bool_token, Bool, reader, reader.read_bool()?);
+    scalar_content_method!(int_token, Int, reader, reader.read_int()?);
+    scalar_content_method!(float_token, Float, reader, reader.read_f64()?);
+    scalar_content_method!(decimal_token, Decimal, reader, reader.read_decimal()?);
+    scalar_content_method!(timestamp_token, Timestamp, reader, reader.read_timestamp()?);
+    scalar_content_method!(string_token, String, reader, reader.read_string()?);
+    scalar_content_method!(symbol_token, Symbol, reader, reader.read_symbol()?);
+    scalar_content_method!(blob_token, Blob, reader, reader.read_blob()?.into());
+    scalar_content_method!(clob_token, Clob, reader, reader.read_clob()?.into());
 
     #[inline]
     fn invalidate_token(&mut self) {
@@ -220,7 +220,7 @@ where
                         let annotations_thunk = self.annotations_thunk();
                         let field_name_thunk = self.field_name_thunk();
                         let token = if self.is_null() {
-                            Token::Null(ion_type)
+                            Content::Null(ion_type)
                         } else {
                             match self.ion_type() {
                                 None => illegal_operation("No type for value from reader")?,
@@ -238,33 +238,33 @@ where
                                 Some(IonType::Blob) => self.blob_token(),
                                 Some(IonType::List) => {
                                     self.step_in()?;
-                                    Token::StartContainer(ContainerType::List)
+                                    Content::StartContainer(ContainerType::List)
                                 }
                                 Some(IonType::SExp) => {
                                     self.step_in()?;
-                                    Token::StartContainer(ContainerType::SExp)
+                                    Content::StartContainer(ContainerType::SExp)
                                 }
                                 Some(IonType::Struct) => {
                                     self.step_in()?;
-                                    Token::StartContainer(ContainerType::Struct)
+                                    Content::StartContainer(ContainerType::Struct)
                                 }
                             }
                         };
                         AnnotatedToken::new(annotations_thunk, field_name_thunk, token)
                     }
                     StreamItem::Nothing => match self.parent_type() {
-                        None => Token::EndStream.into(),
+                        None => Content::EndStream.into(),
                         Some(IonType::SExp) => {
                             self.step_out()?;
-                            Token::EndContainer(ContainerType::SExp).into()
+                            Content::EndContainer(ContainerType::SExp).into()
                         }
                         Some(IonType::List) => {
                             self.step_out()?;
-                            Token::EndContainer(ContainerType::List).into()
+                            Content::EndContainer(ContainerType::List).into()
                         }
                         Some(IonType::Struct) => {
                             self.step_out()?;
-                            Token::EndContainer(ContainerType::Struct).into()
+                            Content::EndContainer(ContainerType::Struct).into()
                         }
                         Some(ion_type) => illegal_operation(format!(
                             "Unexpected non-container type: {}",
@@ -278,15 +278,15 @@ where
                 Some(ion_type) => match ion_type {
                     IonType::List => {
                         self.step_out()?;
-                        Token::EndContainer(ContainerType::List)
+                        Content::EndContainer(ContainerType::List)
                     }
                     IonType::SExp => {
                         self.step_out()?;
-                        Token::EndContainer(ContainerType::SExp)
+                        Content::EndContainer(ContainerType::SExp)
                     }
                     IonType::Struct => {
                         self.step_out()?;
-                        Token::EndContainer(ContainerType::Struct)
+                        Content::EndContainer(ContainerType::Struct)
                     }
                     _ => illegal_operation(format!("Unexpected container type: {}", ion_type))?,
                 },
@@ -340,9 +340,9 @@ mod tests {
 
     fn container_src(container_type: ContainerType, contents: IonResult<Srcs>) -> IonResult<Srcs> {
         let mut srcs = vec![];
-        srcs.push((Next, Token::StartContainer(container_type).into()));
+        srcs.push((Next, Content::StartContainer(container_type).into()));
         srcs.append(&mut contents?);
-        srcs.push((Next, Token::EndContainer(container_type).into()));
+        srcs.push((Next, Content::EndContainer(container_type).into()));
         Ok(srcs)
     }
 
@@ -440,7 +440,7 @@ mod tests {
     where
         S: ToIonDataSource,
     {
-        use Token::*;
+        use Content::*;
         let mut expected_src = expected?;
         // add the terminator
         expected_src.push((Next, EndStream.into()));

@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 
-use super::{AnnotatedToken, ContainerType, Instruction, Token, TokenStream};
+use super::{AnnotatedToken, ContainerType, Content, Instruction, TokenStream};
 use crate::element::{Blob, Clob};
 use crate::result::{illegal_operation, illegal_operation_raw};
 use crate::tokens::ScalarValue;
@@ -41,11 +41,11 @@ where
     fn next_token(&mut self, instruction: Instruction) -> IonResult<StreamItem> {
         let annotated_token = self.stream.next_token(instruction)?;
         let item = match &annotated_token.token {
-            Token::Null(ion_type) => StreamItem::Null(*ion_type),
-            Token::Scalar(thunk) => StreamItem::Value(thunk.scalar_type().into()),
-            Token::StartContainer(container_type) => StreamItem::Value((*container_type).into()),
-            Token::EndContainer(_) => StreamItem::Nothing,
-            Token::EndStream => StreamItem::Nothing,
+            Content::Null(ion_type) => StreamItem::Null(*ion_type),
+            Content::Scalar(thunk) => StreamItem::Value(thunk.scalar_type().into()),
+            Content::StartContainer(container_type) => StreamItem::Value((*container_type).into()),
+            Content::EndContainer(_) => StreamItem::Nothing,
+            Content::EndStream => StreamItem::Nothing,
         };
         self.curr_item = item;
         self.curr_token_cell = Some(RefCell::new(annotated_token));
@@ -128,7 +128,7 @@ where
     fn next(&mut self) -> IonResult<Self::Item> {
         if let Some(token_cell) = &self.curr_token_cell {
             let annotated_token = token_cell.borrow();
-            if let Token::EndContainer(_) = annotated_token.token() {
+            if let Content::EndContainer(_) = annotated_token.token() {
                 // if we're positioned on the end of the container we return nothing until step out
                 return Ok(StreamItem::Nothing);
             }
@@ -146,14 +146,14 @@ where
             Some(token_cell) => {
                 let annotated_token = token_cell.borrow();
                 match annotated_token.token() {
-                    Token::Null(ion_type) => Some(*ion_type),
-                    Token::Scalar(thunk) => Some(thunk.scalar_type().into()),
-                    Token::StartContainer(container_type) => Some((*container_type).into()),
-                    Token::EndContainer(_) => {
+                    Content::Null(ion_type) => Some(*ion_type),
+                    Content::Scalar(thunk) => Some(thunk.scalar_type().into()),
+                    Content::StartContainer(container_type) => Some((*container_type).into()),
+                    Content::EndContainer(_) => {
                         // the end of a container is considered not positioned
                         None
                     }
-                    Token::EndStream => None,
+                    Content::EndStream => None,
                 }
             }
         }
@@ -222,7 +222,7 @@ where
             Some(token_cell) => {
                 let annotated_token = token_cell.borrow();
                 match annotated_token.token() {
-                    Token::StartContainer(container_type) => {
+                    Content::StartContainer(container_type) => {
                         // position the item over nothing
                         self.curr_item = StreamItem::Nothing;
                         // push container context
