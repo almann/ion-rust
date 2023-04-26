@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 
-use super::{AnnotatedToken, ContainerType, Content, Instruction, TokenStream};
+use super::{ContainerType, Content, Instruction, Token, TokenStream};
 use crate::element::{Blob, Clob};
 use crate::result::{illegal_operation, illegal_operation_raw};
 use crate::tokens::ScalarValue;
@@ -23,7 +23,7 @@ where
 
     // XXX this is a RefCell<AnnotationToken> because we need interior mutability for memoization
     /// the current token
-    curr_token_cell: Option<RefCell<AnnotatedToken<'a>>>,
+    curr_token_cell: Option<RefCell<Token<'a>>>,
 
     /// remember the current read item
     curr_item: StreamItem,
@@ -39,8 +39,8 @@ where
 {
     /// Advances the stream, setting the current token and item.
     fn next_token(&mut self, instruction: Instruction) -> IonResult<StreamItem> {
-        let annotated_token = self.stream.next_token(instruction)?;
-        let item = match &annotated_token.token {
+        let token = self.stream.next_token(instruction)?;
+        let item = match &token.content {
             Content::Null(ion_type) => StreamItem::Null(*ion_type),
             Content::Scalar(thunk) => StreamItem::Value(thunk.scalar_type().into()),
             Content::StartContainer(container_type) => StreamItem::Value((*container_type).into()),
@@ -48,7 +48,7 @@ where
             Content::EndStream => StreamItem::Nothing,
         };
         self.curr_item = item;
-        self.curr_token_cell = Some(RefCell::new(annotated_token));
+        self.curr_token_cell = Some(RefCell::new(token));
         Ok(item)
     }
 }
@@ -89,8 +89,8 @@ macro_rules! read_method_self {
             match &$me.curr_token_cell {
                 None => illegal_operation(NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT),
                 Some(token_cell) => {
-                    let mut annotated_token = token_cell.borrow_mut();
-                    match annotated_token.token_mut().no_memoize_scalar() {
+                    let mut token = token_cell.borrow_mut();
+                    match token.token_mut().no_memoize_scalar() {
                         Ok(Some(ScalarValue::$variant($scalar))) => Ok($scalar_exp),
                         Ok(Some(scalar_value)) => illegal_operation(format!(
                             concat!("Cannot read ", stringify!($scalar_type), " from {}"),
@@ -127,8 +127,8 @@ where
 
     fn next(&mut self) -> IonResult<Self::Item> {
         if let Some(token_cell) = &self.curr_token_cell {
-            let annotated_token = token_cell.borrow();
-            if let Content::EndContainer(_) = annotated_token.token() {
+            let token = token_cell.borrow();
+            if let Content::EndContainer(_) = token.token() {
                 // if we're positioned on the end of the container we return nothing until step out
                 return Ok(StreamItem::Nothing);
             }
@@ -144,8 +144,8 @@ where
         match &self.curr_token_cell {
             None => None,
             Some(token_cell) => {
-                let annotated_token = token_cell.borrow();
-                match annotated_token.token() {
+                let token = token_cell.borrow();
+                match token.token() {
                     Content::Null(ion_type) => Some(*ion_type),
                     Content::Scalar(thunk) => Some(thunk.scalar_type().into()),
                     Content::StartContainer(container_type) => Some((*container_type).into()),
@@ -167,8 +167,8 @@ where
         match &self.curr_token_cell {
             None => illegal_operation(NO_FIELD_NAME_ERROR_TEXT),
             Some(token_cell) => {
-                let mut annotated_token = token_cell.borrow_mut();
-                match annotated_token.share_field_name() {
+                let mut token = token_cell.borrow_mut();
+                match token.share_field_name() {
                     Ok(Some(symbol)) => Ok(symbol),
                     Ok(None) => illegal_operation(NO_FIELD_NAME_ERROR_TEXT),
                     Err(e) => Err(e),
@@ -220,8 +220,8 @@ where
         match &self.curr_token_cell {
             None => illegal_operation(STEP_IN_ERROR_TEXT),
             Some(token_cell) => {
-                let annotated_token = token_cell.borrow();
-                match annotated_token.token() {
+                let token = token_cell.borrow();
+                match token.token() {
                     Content::StartContainer(container_type) => {
                         // position the item over nothing
                         self.curr_item = StreamItem::Nothing;

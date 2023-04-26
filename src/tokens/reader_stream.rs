@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 
 use super::{
-    AnnotatedToken, AnnotationsThunk, ContainerType, Content, FieldNameThunk, Instruction,
-    ScalarThunk, ScalarType, ScalarValue, TokenStream,
+    AnnotationsThunk, ContainerType, Content, FieldNameThunk, Instruction, ScalarThunk, ScalarType,
+    ScalarValue, Token, TokenStream,
 };
 use crate::result::illegal_operation;
 use crate::thunk::Thunk;
@@ -202,7 +202,7 @@ impl<'a, R> TokenStream<'a> for ReaderTokenStream<'a, R>
 where
     R: IonReader<Item = StreamItem, Symbol = Symbol> + 'a,
 {
-    fn next_token(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken<'a>> {
+    fn next_token(&mut self, instruction: Instruction) -> IonResult<Token<'a>> {
         use crate::tokens::Instruction::*;
         // once we enter this method--we must invalidate any outstanding token references
         // this has to do with the lifetime of the returned token which cannot be statically
@@ -250,7 +250,7 @@ where
                                 }
                             }
                         };
-                        AnnotatedToken::new(annotations_thunk, field_name_thunk, token)
+                        Token::new(annotations_thunk, field_name_thunk, token)
                     }
                     StreamItem::Nothing => match self.parent_type() {
                         None => Content::EndStream.into(),
@@ -325,7 +325,7 @@ mod tests {
         crate::Timestamp::with_year(1999).build().unwrap()
     }
 
-    type Src = (Instruction, AnnotatedToken<'static>);
+    type Src = (Instruction, Token<'static>);
     type Srcs = Vec<Src>;
 
     fn single_src<T>(value: T) -> IonResult<Srcs>
@@ -355,10 +355,10 @@ mod tests {
 
     fn last_next_end(contents: IonResult<Srcs>) -> IonResult<Srcs> {
         let mut srcs = contents?;
-        let (_, annotated_token) = srcs
+        let (_, token) = srcs
             .pop()
             .ok_or(illegal_operation_raw("No last element in stream to change"))?;
-        srcs.push((NextEnd, annotated_token));
+        srcs.push((NextEnd, token));
         Ok(srcs)
     }
 
@@ -388,14 +388,14 @@ mod tests {
     {
         let mut srcs = srcs_res?;
         if srcs.len() == 0 {
-            return illegal_operation("Cannot annotated empty");
+            return illegal_operation("Cannot annotate nothing");
         }
 
         // not exactly efficient, but that's fine here
-        let (instruction, mut annotated_token) = srcs.remove(0);
+        let (instruction, mut token) = srcs.remove(0);
         let annotations: Vec<Symbol> = annotations.into_iter().map(|s| s.as_ref().into()).collect();
-        annotated_token = annotated_token.with_annotations(Thunk::wrap(annotations.into()));
-        srcs.insert(0, (instruction, annotated_token));
+        token = token.with_annotations(Thunk::wrap(annotations.into()));
+        srcs.insert(0, (instruction, token));
 
         Ok(srcs)
     }
@@ -449,22 +449,22 @@ mod tests {
         let reader = ReaderBuilder::new().build(data)?;
         let mut tokens: ReaderTokenStream<_> = reader.into();
         let mut actual_count: usize = 0;
-        for (instruction, expected_ann_token) in expected_src {
+        for (instruction, expected_token) in expected_src {
             actual_count += 1;
-            let ann_token = tokens.next_token(instruction)?;
+            let token = tokens.next_token(instruction)?;
 
-            let (exp_ann_thunk, exp_field_name_thunk, exp_token) = expected_ann_token.into_inner();
-            let (ann_thunk, field_name_thunk, actual_token) = ann_token.into_inner();
+            let (exp_ann_thunk, exp_field_name_thunk, exp_content) = expected_token.into_inner();
+            let (ann_thunk, field_name_thunk, content) = token.into_inner();
 
             let exp_anns = exp_ann_thunk.evaluate()?;
             let actual_anns = ann_thunk.evaluate()?;
             assert_eq!(exp_anns, actual_anns);
 
             let exp_field_name = exp_field_name_thunk.evaluate()?;
-            let actual_field_name = field_name_thunk.evaluate()?;
-            assert_eq!(exp_field_name, actual_field_name);
+            let field_name = field_name_thunk.evaluate()?;
+            assert_eq!(exp_field_name, field_name);
 
-            match (exp_token, actual_token) {
+            match (exp_content, content) {
                 (Null(exp_ion_type), Null(actual_ion_type)) => {
                     assert_eq!(exp_ion_type, actual_ion_type);
                 }
@@ -514,10 +514,10 @@ mod tests {
             valid_token.memoize()?;
             let _next_token = tokens.next_token(Next)?;
 
-            let (mut annotations, mut field_name, mut inner_token) = valid_token.into_inner();
+            let (mut annotations, mut field_name, mut content) = valid_token.into_inner();
             assert!(field_name.memoize()?.is_none());
             assert_eq!(0, annotations.memoize()?.len());
-            let scalar_opt = inner_token.memoize_scalar()?;
+            let scalar_opt = content.memoize_scalar()?;
             assert_eq!(Some(&ScalarValue::Int(1.into())), scalar_opt);
         }
         Ok(())

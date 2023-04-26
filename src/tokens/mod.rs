@@ -351,22 +351,22 @@ impl<'a> From<ScalarThunk<'a>> for Content<'a> {
 
 /// A token decorated with annotations and a field name (which could be empty or inapplicable).
 #[derive(Debug)]
-pub struct AnnotatedToken<'a> {
+pub struct Token<'a> {
     annotations: AnnotationsThunk<'a>,
     field_name: FieldNameThunk<'a>,
-    token: Content<'a>,
+    content: Content<'a>,
 }
 
-impl<'a> AnnotatedToken<'a> {
+impl<'a> Token<'a> {
     pub fn new(
         annotations: AnnotationsThunk<'a>,
         field_name: FieldNameThunk<'a>,
-        token: Content<'a>,
+        content: Content<'a>,
     ) -> Self {
         Self {
             annotations,
             field_name,
-            token,
+            content,
         }
     }
 
@@ -374,17 +374,17 @@ impl<'a> AnnotatedToken<'a> {
     ///
     /// This is generally the API which one would use to "extract" the token.
     pub fn into_inner(self) -> (AnnotationsThunk<'a>, FieldNameThunk<'a>, Content<'a>) {
-        (self.annotations, self.field_name, self.token)
+        (self.annotations, self.field_name, self.content)
     }
 
     /// Consumes and decorates this token with a field name.
     pub fn with_field_name(self, field_name: FieldNameThunk<'a>) -> Self {
-        Self::new(self.annotations, field_name, self.token)
+        Self::new(self.annotations, field_name, self.content)
     }
 
     /// Consumes and decorates this token with annotations.
     pub fn with_annotations(self, annotations: AnnotationsThunk<'a>) -> Self {
-        Self::new(annotations, self.field_name, self.token)
+        Self::new(annotations, self.field_name, self.content)
     }
 
     /// Returns a reference of the underlying token for this decorated one.
@@ -392,34 +392,34 @@ impl<'a> AnnotatedToken<'a> {
     /// This is generally used to observe non-destructive information about a token.
     /// Specifically things like if it is a value/container delimiters/null.
     pub fn token(&self) -> &Content<'a> {
-        &self.token
+        &self.content
     }
 
     /// Returns a mutable reference to the underlying token for this decorated one.
     ///
     /// This is useful for in-place evaluation/materialization of the underlying value.
     pub fn token_mut(&mut self) -> &mut Content<'a> {
-        &mut self.token
+        &mut self.content
     }
 
-    /// Consume this annotated token into one that owns its content.
-    pub fn materialize(self) -> IonResult<AnnotatedToken<'static>> {
-        Ok(AnnotatedToken::<'static>::new(
+    /// Consume this token into one that owns its content.
+    pub fn materialize(self) -> IonResult<Token<'static>> {
+        Ok(Token::<'static>::new(
             self.annotations.materialize()?,
             self.field_name.materialize()?,
-            self.token.materialize()?,
+            self.content.materialize()?,
         ))
     }
 
-    // TODO fix this API to be a bit less awkward with returning a token reference...
+    // TODO fix this API to be a bit less awkward with returning a content reference...
 
     /// Materialize in-place. Similar to [`Thunk::memoize`] for all the content.
     pub fn memoize(&mut self) -> IonResult<(&Annotations, Option<&Symbol>, &Content)> {
-        self.token.memoize_scalar()?;
+        self.content.memoize_scalar()?;
         Ok((
             self.annotations.memoize()?,
             self.field_name.memoize()?.as_ref(),
-            &mut self.token,
+            &mut self.content,
         ))
     }
 
@@ -440,15 +440,15 @@ impl<'a> AnnotatedToken<'a> {
     }
 }
 
-impl<'a> From<Content<'a>> for AnnotatedToken<'a> {
+impl<'a> From<Content<'a>> for Token<'a> {
     fn from(value: Content<'a>) -> Self {
-        AnnotatedToken::new(Thunk::wrap(Annotations::empty()), Thunk::wrap(None), value)
+        Token::new(Thunk::wrap(Annotations::empty()), Thunk::wrap(None), value)
     }
 }
 
-impl From<ScalarValue> for AnnotatedToken<'static> {
+impl From<ScalarValue> for Token<'static> {
     fn from(value: ScalarValue) -> Self {
-        AnnotatedToken::new(
+        Token::new(
             Thunk::wrap(Annotations::empty()),
             Thunk::wrap(None),
             value.into(),
@@ -467,7 +467,7 @@ pub enum Instruction {
     NextEnd,
 }
 
-/// Provides an iterator-like API over Ion data as [`AnnotatedToken`].
+/// Provides an iterator-like API over Ion data as [`Token`].
 pub trait TokenStream<'a> {
     /// Advances the stream to the next token.
     ///
@@ -483,7 +483,7 @@ pub trait TokenStream<'a> {
     /// [field_name]: crate::IonReader::field_name
     /// [next]: crate::IonReader::next
     /// [annotations]: crate::IonReader::annotations
-    fn next_token(&mut self, instruction: Instruction) -> IonResult<AnnotatedToken<'a>>;
+    fn next_token(&mut self, instruction: Instruction) -> IonResult<Token<'a>>;
 }
 
 #[cfg(test)]
