@@ -272,3 +272,61 @@ where
         self.container_stack.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element::reader::ElementReader;
+    use crate::element::Element;
+    use crate::tokens::reader_stream::ReaderTokenStream;
+    use crate::{IonData, ReaderBuilder};
+    /// very basic equivalence testing
+    #[rstest]
+    #[case::null("null")]
+    #[case::null_int("null.int")]
+    #[case::ann_null_float("a::b::null.float")]
+    #[case::bool("true")]
+    #[case::ann_bool("foo::false")]
+    #[case::int("127")]
+    #[case::ann_int("i8::-127")]
+    #[case::float("1e0")]
+    #[case::ann_inf("too::much::+inf")]
+    #[case::ann_nan("not::a::number::nan")]
+    #[case::dec("127.0000000000")]
+    #[case::ann_dec("woah::such::precision::-127.0000000e100")]
+    #[case::timestamp("2023-05-01T12:37:43Z")]
+    #[case::ann_timestamp("back::to::the::future::2099T")]
+    #[case::symbol("'moon'")]
+    #[case::ann_symbol("hello::world")]
+    #[case::string("'''hello brown cow'''")]
+    #[case::ann_string("poo::emoji::\"\\U0001F4A9\"")]
+    #[case::clob("{{ '''<html></html>''' }}")]
+    #[case::ann_clob("sgml::{{ '''<html></html>''' }}")]
+    #[case::clob("{{ Blob }}")]
+    #[case::ann_clob("this::is::real::{{ BLOB }}")]
+    #[case::empty_sexp("()")]
+    #[case::empty_list("[]")]
+    #[case::empty_struct("{}")]
+    #[case::ann_empty_sexp("a::()")]
+    #[case::ann_empty_list("b::[]")]
+    #[case::ann_empty_struct("c::{}")]
+    #[case::deeply_nested("([([([((a b c) d e), 1, 2] f g), 3, 4])])")]
+    fn test_read<S: AsRef<str>>(#[case] text: S) -> IonResult<()> {
+        // read normally
+        let expected = Element::read_all(text.as_ref())?;
+
+        // read "through" a stream
+        let stream: ReaderTokenStream<_> = ReaderBuilder::default().build(text.as_ref())?.into();
+        let mut reader: TokenStreamReader<_> = stream.into();
+        let actual = reader.read_all_elements()?;
+
+        assert_eq!(expected.len(), actual.len());
+        for (exp_elem, act_elem) in zip(expected.iter(), actual.iter()) {
+            assert!(IonData::eq(exp_elem, act_elem));
+        }
+        Ok(())
+    }
+    use rstest::rstest;
+
+    use std::iter::zip;
+}
