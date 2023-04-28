@@ -387,18 +387,18 @@ impl<'a> Token<'a> {
         Self::new(annotations, self.field_name, self.content)
     }
 
-    /// Returns a reference of the underlying token for this decorated one.
+    /// Returns a reference of the underlying content.
     ///
-    /// This is generally used to observe non-destructive information about a token.
+    /// This is generally used to observe non-destructive information about the content of a token.
     /// Specifically things like if it is a value/container delimiters/null.
-    pub fn token(&self) -> &Content<'a> {
+    pub fn content(&self) -> &Content<'a> {
         &self.content
     }
 
-    /// Returns a mutable reference to the underlying token for this decorated one.
+    /// Returns a mutable reference to the underlying content.
     ///
     /// This is useful for in-place evaluation/materialization of the underlying value.
-    pub fn token_mut(&mut self) -> &mut Content<'a> {
+    pub fn content_mut(&mut self) -> &mut Content<'a> {
         &mut self.content
     }
 

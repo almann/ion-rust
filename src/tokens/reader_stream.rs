@@ -78,6 +78,17 @@ impl PendingToken {
     }
 }
 
+/// Condensed version of the item of the [`IonReader`].
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+enum ReaderPosition {
+    /// We are positioned on nothing.
+    Nothing,
+    /// We are positioned on some value.
+    NonContainer,
+    /// We are positioned on the start of some container.
+    Container,
+}
+
 /// Adapter for a [`TokenStream`] over an arbitrary [`IonReader`]
 pub struct ReaderTokenStream<'a, R>
 where
@@ -86,6 +97,7 @@ where
     // XXX this is so we can have multiple closures to lazily evaluate tokens
     reader_cell: Rc<RefCell<UnderlyingReader<R>>>,
     pending_token: PendingToken,
+    position: ReaderPosition,
     // XXX this allows us to explicitly capture a lifetime for the reader we operate on
     phantom: PhantomData<&'a R>,
 }
@@ -159,13 +171,24 @@ where
     fn next(&mut self) -> IonResult<StreamItem> {
         let mut underlying = self.reader_cell.borrow_mut();
         let reader = underlying.as_mut_ref();
-        reader.next()
+        self.position = ReaderPosition::Nothing;
+        let item = reader.next()?;
+        self.position = match item {
+            StreamItem::Value(ion_type) => match ion_type {
+                IonType::List | IonType::SExp | IonType::Struct => ReaderPosition::Container,
+                _ => ReaderPosition::NonContainer,
+            },
+            StreamItem::Null(_) => ReaderPosition::NonContainer,
+            StreamItem::Nothing => ReaderPosition::Nothing,
+        };
+        Ok(item)
     }
 
     #[inline]
     fn step_in(&mut self) -> IonResult<()> {
         let mut underlying = self.reader_cell.borrow_mut();
         let reader = underlying.as_mut_ref();
+        self.position = ReaderPosition::Nothing;
         reader.step_in()
     }
 
@@ -173,6 +196,7 @@ where
     fn step_out(&mut self) -> IonResult<()> {
         let mut underlying = self.reader_cell.borrow_mut();
         let reader = underlying.as_mut_ref();
+        self.position = ReaderPosition::Nothing;
         reader.step_out()
     }
 
@@ -203,7 +227,8 @@ where
     R: IonReader<Item = StreamItem, Symbol = Symbol> + 'a,
 {
     fn next_token(&mut self, instruction: Instruction) -> IonResult<Token<'a>> {
-        use crate::tokens::Instruction::*;
+        use self::Instruction::*;
+
         // once we enter this method--we must invalidate any outstanding token references
         // this has to do with the lifetime of the returned token which cannot be statically
         self.invalidate_token();
@@ -212,6 +237,11 @@ where
         self.pending_token = PendingToken::Materialized;
         Ok(match instruction {
             Next => {
+                // if we're on a container, we need to step in
+                if matches!(self.position, ReaderPosition::Container) {
+                    self.step_in()?;
+                }
+
                 let item = self.next()?;
                 match item {
                     StreamItem::Value(ion_type) | StreamItem::Null(ion_type) => {
@@ -236,16 +266,9 @@ where
                                 Some(IonType::String) => self.string_token(),
                                 Some(IonType::Clob) => self.clob_token(),
                                 Some(IonType::Blob) => self.blob_token(),
-                                Some(IonType::List) => {
-                                    self.step_in()?;
-                                    Content::StartContainer(ContainerType::List)
-                                }
-                                Some(IonType::SExp) => {
-                                    self.step_in()?;
-                                    Content::StartContainer(ContainerType::SExp)
-                                }
+                                Some(IonType::List) => Content::StartContainer(ContainerType::List),
+                                Some(IonType::SExp) => Content::StartContainer(ContainerType::SExp),
                                 Some(IonType::Struct) => {
-                                    self.step_in()?;
                                     Content::StartContainer(ContainerType::Struct)
                                 }
                             }
@@ -275,21 +298,19 @@ where
             }
             NextEnd => match self.parent_type() {
                 None => illegal_operation("Cannot skip to next end at top-level")?,
-                Some(ion_type) => match ion_type {
-                    IonType::List => {
+                Some(ion_type) => {
+                    // if we're not positioned on a container, we need to step out
+                    if !matches!(self.position, ReaderPosition::Container) {
                         self.step_out()?;
-                        Content::EndContainer(ContainerType::List)
                     }
-                    IonType::SExp => {
-                        self.step_out()?;
-                        Content::EndContainer(ContainerType::SExp)
+
+                    match ion_type {
+                        IonType::List => Content::EndContainer(ContainerType::List),
+                        IonType::SExp => Content::EndContainer(ContainerType::SExp),
+                        IonType::Struct => Content::EndContainer(ContainerType::Struct),
+                        _ => illegal_operation(format!("Unexpected container type: {}", ion_type))?,
                     }
-                    IonType::Struct => {
-                        self.step_out()?;
-                        Content::EndContainer(ContainerType::Struct)
-                    }
-                    _ => illegal_operation(format!("Unexpected container type: {}", ion_type))?,
-                },
+                }
             }
             .into(),
         })
@@ -304,6 +325,7 @@ where
         ReaderTokenStream {
             reader_cell: Rc::new(RefCell::new(UnderlyingReader::Active(value))),
             pending_token: PendingToken::None,
+            position: ReaderPosition::Nothing,
             phantom: Default::default(),
         }
     }
@@ -423,6 +445,9 @@ mod tests {
     #[case::empty_list(container_src(ContainerType::List, Ok(vec![])), "[]")]
     #[case::empty_sexp(container_src(ContainerType::SExp, Ok(vec![])), "()")]
     #[case::empty_struct(container_src(ContainerType::Struct, Ok(vec![])), "{}")]
+    #[case::ann_empty_list(annotate_first_srcs(["a"], container_src(ContainerType::List, Ok(vec![]))), "a::[]")]
+    #[case::ann_empty_sexp(annotate_first_srcs(["b"], container_src(ContainerType::SExp, Ok(vec![]))), "b::()")]
+    #[case::ann_empty_struct(annotate_first_srcs(["c"], container_src(ContainerType::Struct, Ok(vec![]))), "c::{}")]
     #[case::list_skip_start(container_skip_src(ContainerType::List, Ok(vec![])), "[1, 2, 3, 4, 5]")]
     #[case::sexp_skip_start(container_skip_src(ContainerType::SExp, Ok(vec![])), "(a b c d e f)")]
     #[case::struct_skip_start(container_skip_src(ContainerType::Struct, Ok(vec![])), "{a:1, b:2}")]
@@ -435,7 +460,7 @@ mod tests {
         "(a b c d e f)"
     )]
     #[case::struct_skip_second(last_next_end(singleton_struct_src()), "{a:5, b:6, c:7}")]
-    #[case::annotated(annotate_first_srcs(["a", "b", "c"], single_src(false)), "a::b::c::false")]
+    #[case::ann(annotate_first_srcs(["a", "b", "c"], single_src(false)), "a::b::c::false")]
     fn stream_test<S>(#[case] expected: IonResult<Srcs>, #[case] data: S) -> IonResult<()>
     where
         S: ToIonDataSource,

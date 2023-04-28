@@ -18,7 +18,7 @@ where
     T: TokenStream<'a>,
 {
     stream: T,
-    /// Models what containers we
+    /// Models what containers we are in
     container_stack: Vec<ContainerType>,
 
     // XXX this is a RefCell<AnnotationToken> because we need interior mutability for memoization
@@ -90,7 +90,7 @@ macro_rules! read_method_self {
                 None => illegal_operation(NOT_POSITIONED_ON_ANYTHING_ERROR_TEXT),
                 Some(token_cell) => {
                     let mut token = token_cell.borrow_mut();
-                    match token.token_mut().no_memoize_scalar() {
+                    match token.content_mut().no_memoize_scalar() {
                         Ok(Some(ScalarValue::$variant($scalar))) => Ok($scalar_exp),
                         Ok(Some(scalar_value)) => illegal_operation(format!(
                             concat!("Cannot read ", stringify!($scalar_type), " from {}"),
@@ -128,7 +128,7 @@ where
     fn next(&mut self) -> IonResult<Self::Item> {
         if let Some(token_cell) = &self.curr_token_cell {
             let token = token_cell.borrow();
-            if let Content::EndContainer(_) = token.token() {
+            if let Content::EndContainer(_) = token.content() {
                 // if we're positioned on the end of the container we return nothing until step out
                 return Ok(StreamItem::Nothing);
             }
@@ -145,7 +145,7 @@ where
             None => None,
             Some(token_cell) => {
                 let token = token_cell.borrow();
-                match token.token() {
+                match token.content() {
                     Content::Null(ion_type) => Some(*ion_type),
                     Content::Scalar(thunk) => Some(thunk.scalar_type().into()),
                     Content::StartContainer(container_type) => Some((*container_type).into()),
@@ -235,7 +235,7 @@ where
             None => illegal_operation(STEP_IN_ERROR_TEXT),
             Some(token_cell) => {
                 let token = token_cell.borrow();
-                match token.token() {
+                match token.content() {
                     Content::StartContainer(container_type) => {
                         // position the item over nothing
                         self.curr_item = StreamItem::Nothing;
@@ -252,9 +252,32 @@ where
     fn step_out(&mut self) -> IonResult<()> {
         // pop container context
         match self.container_stack.pop() {
-            Some(_) => {
-                // advance stream to the end of the container
-                self.next_token(Instruction::NextEnd)?;
+            Some(stack_container_type) => {
+                // advance stream to the end of the container--unless we're already there
+                let next_end = match &self.curr_token_cell {
+                    None => unreachable!("No token within a container"),
+                    Some(token_cell) => {
+                        let token = token_cell.borrow();
+                        match token.content() {
+                            Content::EndContainer(end_container_type) => {
+                                assert_eq!(stack_container_type, *end_container_type);
+                                // nothing to do
+                                false
+                            }
+                            Content::EndStream => {
+                                illegal_operation("End of stream in the middle of container")?
+                            }
+                            _ => {
+                                // we are not at the end of the current container
+                                true
+                            }
+                        }
+                    }
+                };
+                // we have to do this after the above because of the cell borrow
+                if next_end {
+                    self.next_token(Instruction::NextEnd)?;
+                }
                 Ok(())
             }
             None => illegal_operation(STEP_OUT_ERROR_TEXT),
@@ -322,7 +345,12 @@ mod tests {
 
         assert_eq!(expected.len(), actual.len());
         for (exp_elem, act_elem) in zip(expected.iter(), actual.iter()) {
-            assert!(IonData::eq(exp_elem, act_elem));
+            assert!(
+                IonData::eq(exp_elem, act_elem),
+                "{} != {}",
+                exp_elem,
+                act_elem
+            );
         }
         Ok(())
     }
