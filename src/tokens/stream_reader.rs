@@ -126,14 +126,35 @@ where
     }
 
     fn next(&mut self) -> IonResult<Self::Item> {
-        if let Some(token_cell) = &self.curr_token_cell {
-            let token = token_cell.borrow();
-            if let Content::EndContainer(_) = token.content() {
-                // if we're positioned on the end of the container we return nothing until step out
-                return Ok(StreamItem::Nothing);
+        match &self.curr_token_cell {
+            None => self.next_token(Instruction::Next),
+            Some(token_cell) => {
+                let token = token_cell.borrow();
+                let insn_opt: Option<_> = match token.content() {
+                    // normal values are just a next
+                    Content::Null(_) | Content::Scalar(_) => Some(Instruction::Next),
+                    Content::StartContainer(_) => {
+                        match self.curr_item {
+                            // container values are not stepped into
+                            StreamItem::Value(_) => Some(Instruction::NextEnd),
+                            StreamItem::Null(_) => {
+                                unreachable!("Cannot be null and on a start container")
+                            }
+                            // if our current item is nothing, we've stepped in
+                            StreamItem::Nothing => Some(Instruction::Next),
+                        }
+                    }
+                    // end positions are terminal unless step_out if applicable
+                    Content::EndContainer(_) | Content::EndStream => None,
+                };
+                drop(token);
+                // we need to drop the cell borrow before we can advance
+                match insn_opt {
+                    Some(instruction) => self.next_token(instruction),
+                    None => Ok(StreamItem::Nothing),
+                }
             }
         }
-        self.next_token(Instruction::Next)
     }
 
     fn current(&self) -> Self::Item {
