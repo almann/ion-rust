@@ -51,6 +51,13 @@ where
         self.curr_token_cell = Some(RefCell::new(token));
         Ok(item)
     }
+
+    /// Resets the state to just before something at the current level of the stream
+    fn reset_curr_state(&mut self) -> IonResult<()> {
+        self.curr_item = StreamItem::Nothing;
+        self.curr_token_cell = None;
+        Ok(())
+    }
 }
 
 impl<'a, T> From<T> for TokenStreamReader<'a, T>
@@ -282,7 +289,7 @@ where
                         match token.content() {
                             Content::EndContainer(end_container_type) => {
                                 assert_eq!(stack_container_type, *end_container_type);
-                                // nothing to do
+                                // no advancement necessary, we're at the end of the container
                                 false
                             }
                             Content::EndStream => {
@@ -299,6 +306,9 @@ where
                 if next_end {
                     self.next_token(Instruction::NextEnd)?;
                 }
+                // at this point we need to reset the current token to basically indicate that
+                // we've consumed it and can continue on our way
+                self.reset_curr_state()?;
                 Ok(())
             }
             None => illegal_operation(STEP_OUT_ERROR_TEXT),
