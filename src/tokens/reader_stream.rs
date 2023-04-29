@@ -11,8 +11,8 @@ use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::rc::Rc;
 
-const INVALID_TOKEN_ERR_TEXT: &'static str = "TokenStream is past this token";
-const INVALID_TOKEN_PANIC_TEXT: &'static str = "Invalid underlying reader state";
+const INVALID_TOKEN_ERR_TEXT: &str = "TokenStream is past this token";
+const INVALID_TOKEN_PANIC_TEXT: &str = "Invalid underlying reader state";
 
 // TODO make this more generic with respect to other readers--the problem is Item/Symbol
 // TODO this has to abstract over potentially system reader to implement macros
@@ -419,7 +419,7 @@ mod tests {
         S: AsRef<str>,
     {
         let mut srcs = srcs_res?;
-        if srcs.len() == 0 {
+        if srcs.is_empty() {
             return illegal_operation("Cannot annotate nothing");
         }
 

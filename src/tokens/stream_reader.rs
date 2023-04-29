@@ -202,7 +202,7 @@ where
                 }
             }
         };
-        Box::new(iter.map(|s| Ok(s)))
+        Box::new(iter.map(Ok))
     }
 
     fn field_name(&self) -> IonResult<Self::Symbol> {
@@ -316,10 +316,9 @@ where
     }
 
     fn parent_type(&self) -> Option<IonType> {
-        match self.container_stack.last() {
-            Some(container_type) => Some((*container_type).into()),
-            None => None,
-        }
+        self.container_stack
+            .last()
+            .map(|container_type| (*container_type).into())
     }
 
     fn depth(&self) -> usize {
