@@ -86,7 +86,7 @@ enum ReaderPosition {
     /// We are positioned on some value.
     NonContainer,
     /// We are positioned on the start of some container.
-    Container,
+    Container(ContainerType),
 }
 
 /// Adapter for a [`TokenStream`] over an arbitrary [`IonReader`]
@@ -175,7 +175,9 @@ where
         let item = reader.next()?;
         self.position = match item {
             StreamItem::Value(ion_type) => match ion_type {
-                IonType::List | IonType::SExp | IonType::Struct => ReaderPosition::Container,
+                IonType::List => ReaderPosition::Container(ContainerType::List),
+                IonType::SExp => ReaderPosition::Container(ContainerType::SExp),
+                IonType::Struct => ReaderPosition::Container(ContainerType::Struct),
                 _ => ReaderPosition::NonContainer,
             },
             StreamItem::Null(_) => ReaderPosition::NonContainer,
@@ -238,7 +240,7 @@ where
         Ok(match instruction {
             Next => {
                 // if we're on a container, we need to step in
-                if matches!(self.position, ReaderPosition::Container) {
+                if matches!(self.position, ReaderPosition::Container(_)) {
                     self.step_in()?;
                 }
 
@@ -296,21 +298,29 @@ where
                     },
                 }
             }
-            NextEnd => match self.parent_type() {
-                None => illegal_operation("Cannot skip to next end at top-level")?,
-                Some(ion_type) => {
-                    // if we're not positioned on a container, we need to step out
-                    if !matches!(self.position, ReaderPosition::Container) {
-                        self.step_out()?;
-                    }
-
-                    match ion_type {
-                        IonType::List => Content::EndContainer(ContainerType::List),
-                        IonType::SExp => Content::EndContainer(ContainerType::SExp),
-                        IonType::Struct => Content::EndContainer(ContainerType::Struct),
-                        _ => illegal_operation(format!("Unexpected container type: {}", ion_type))?,
-                    }
+            NextEnd => match self.position {
+                ReaderPosition::Container(container_type) => {
+                    // we're on the start of a container so we don't have to move the reader
+                    // but we have to emulate moving the reader
+                    self.position = ReaderPosition::Nothing;
+                    Content::EndContainer(container_type)
                 }
+                _ => match self.parent_type() {
+                    None => illegal_operation("Cannot skip to next end at top-level")?,
+                    Some(ion_type) => {
+                        self.step_out()?;
+
+                        match ion_type {
+                            IonType::List => Content::EndContainer(ContainerType::List),
+                            IonType::SExp => Content::EndContainer(ContainerType::SExp),
+                            IonType::Struct => Content::EndContainer(ContainerType::Struct),
+                            _ => illegal_operation(format!(
+                                "Unexpected container type: {}",
+                                ion_type
+                            ))?,
+                        }
+                    }
+                },
             }
             .into(),
         })
