@@ -521,8 +521,8 @@ mod tests {
         let from_clone = from.clone();
         let actual = from_clone.try_into()?;
         assert_eq!(expected, actual);
+        assert_eq!(format!("{}", expected), format!("{}", actual));
         assert_eq!(from, actual.into());
-
         Ok(())
     }
 

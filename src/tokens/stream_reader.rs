@@ -363,6 +363,7 @@ mod tests {
     #[case::ann_empty_sexp("a::()")]
     #[case::ann_empty_list("b::[]")]
     #[case::ann_empty_struct("c::{}")]
+    #[case::struct_nested("{a:1, b:2, c:{d:3, e:{f:4, g:5, h:6}, j:7, k:8, l:{m:9}}}")]
     #[case::deeply_nested("([([([((a b c) d e), 1, 2] f g), 3, 4])])")]
     fn test_read<S: AsRef<str>>(#[case] text: S) -> IonResult<()> {
         // read normally
