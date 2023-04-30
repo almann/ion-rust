@@ -395,8 +395,6 @@ mod tests {
         Ok(())
     }
 
-    type AssertFn<'a> = Box<dyn FnMut() -> () + 'a>;
-
     const ION_TYPES: &[IonType] = &[
         IonType::Null,
         IonType::Bool,

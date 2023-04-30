@@ -419,9 +419,8 @@ mod tests {
         S: AsRef<str>,
         T: ParseStr + PartialEq + Debug + Display,
     {
-        match T::parse_str(bad_text) {
-            Ok(t) => panic!("Parsed invalid string as {}", t),
-            Err(_) => (),
+        if let Ok(t) = T::parse_str(bad_text) {
+            panic!("Parsed invalid string as {}", t)
         }
     }
 
