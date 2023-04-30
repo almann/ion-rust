@@ -70,26 +70,6 @@ impl TryFrom<IonType> for ScalarType {
     }
 }
 
-impl<T> From<T> for ScalarType
-where
-    T: AsRef<ScalarValue>,
-{
-    fn from(value: T) -> Self {
-        use ScalarType::*;
-        match value.as_ref() {
-            ScalarValue::Bool(_) => Bool,
-            ScalarValue::Int(_) => Int,
-            ScalarValue::Float(_) => Float,
-            ScalarValue::Decimal(_) => Decimal,
-            ScalarValue::Timestamp(_) => Timestamp,
-            ScalarValue::String(_) => String,
-            ScalarValue::Symbol(_) => Symbol,
-            ScalarValue::Blob(_) => Blob,
-            ScalarValue::Clob(_) => Clob,
-        }
-    }
-}
-
 /// Subset of [`IonType`] that are strictly the container types.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ContainerType {
@@ -495,6 +475,26 @@ mod tests {
         assert_eq!(expected, actual);
         assert_eq!(format!("{}", expected), format!("{}", actual));
         assert_eq!(from, actual.into());
+        Ok(())
+    }
+
+    #[rstest]
+    #[case::scalar_bool_t(ScalarType::Bool, Bool(false))]
+    #[case::scalar_int_t(ScalarType::Int, Int(3.into()))]
+    #[case::scalar_float_t(ScalarType::Float, Float(1.1))]
+    #[case::scalar_decimal_t(ScalarType::Decimal, Decimal(42.into()))]
+    #[case::scalar_timestamp_t(ScalarType::Timestamp, Timestamp(sample_timestamp()))]
+    #[case::scalar_symbol_t(ScalarType::Symbol, Symbol("foo".into()))]
+    #[case::scalar_string_t(ScalarType::String, String("bar".into()))]
+    #[case::scalar_clob_t(ScalarType::Clob, Clob("hello".into()))]
+    #[case::scalar_blob_t(ScalarType::Blob, Blob("world".into()))]
+    fn test_scalar_value_to_scalar_type(
+        #[case] expected: ScalarType,
+        #[case] from: ScalarValue,
+    ) -> IonResult<()> {
+        let actual: ScalarType = from.scalar_type();
+        assert_eq!(expected, actual);
+        assert_eq!(format!("{}", expected), format!("{}", actual));
         Ok(())
     }
 
