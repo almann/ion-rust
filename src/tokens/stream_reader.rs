@@ -458,16 +458,16 @@ mod tests {
                                     assert!(ion_eq_f64(&left, &right));
                                 }
                                 IonType::Decimal => assert_eq!(
-                                    top_level.as_decimal().unwrap(),
-                                    &reader.read_decimal()?
+                                    *top_level.as_decimal().unwrap(),
+                                    reader.read_decimal()?
                                 ),
                                 IonType::Timestamp => assert_eq!(
-                                    top_level.as_timestamp().unwrap(),
-                                    &reader.read_timestamp()?
+                                    *top_level.as_timestamp().unwrap(),
+                                    reader.read_timestamp()?
                                 ),
                                 IonType::Symbol => assert_eq!(
-                                    top_level.as_symbol().unwrap(),
-                                    &reader.read_symbol()?
+                                    *top_level.as_symbol().unwrap(),
+                                    reader.read_symbol()?
                                 ),
                                 IonType::String => assert_eq!(
                                     top_level.as_string().unwrap(),

@@ -436,6 +436,7 @@ mod tests {
     use super::*;
     use crate::{IonError, IonResult, IonType};
     use rstest::rstest;
+    use rstest_reuse::{self, *};
     use std::fmt::Debug;
 
     /// An arbitrary timestamp as a filler for testing purposes.
@@ -524,18 +525,138 @@ mod tests {
         test_invalid_conversion::<_, ContainerType>(bad_type)
     }
 
+    #[rstest]
+    #[case::sexp_t(IonType::SExp)]
+    #[case::list_t(IonType::List)]
+    #[case::struct_t(IonType::Struct)]
+    fn test_invalid_scalar_type_conversion(#[case] bad_type: IonType) {
+        test_invalid_conversion::<_, ScalarType>(bad_type)
+    }
+
     /// An arbitrary empty struct for testing the wrapper types.
     fn empty_struct() -> crate::element::Struct {
         crate::element::Struct::builder().build()
     }
 
-    // XXX note that struct is spelled strct to avoid keyword clash
     #[rstest]
-    #[case::null(Value::Null(IonType::Null))]
-    #[case::sexp(Value::SExp(vec![].into()))]
-    #[case::list(Value::List(vec![].into()))]
-    #[case::strct(Value::Struct(empty_struct()))]
+    #[case::null_val(Value::Null(IonType::Null))]
+    #[case::sexp_val(Value::SExp(vec![].into()))]
+    #[case::list_val(Value::List(vec![].into()))]
+    #[case::struct_val(Value::Struct(empty_struct()))]
     fn test_invalid_scalar_conversion(#[case] bad_value: Value) {
         test_invalid_conversion::<_, ScalarValue>(bad_value)
+    }
+
+    #[test]
+    fn test_scalar_thunk_evaluate() -> IonResult<()> {
+        let mut thunk = ScalarThunk(ScalarType::Bool, Thunk::defer(|| Ok(Bool(true))));
+        assert_eq!(ScalarType::Bool, thunk.scalar_type());
+        assert_eq!(ThunkState::Deferred, thunk.thunk_state());
+        assert_eq!(Bool(true), thunk.no_memoize()?);
+        assert_eq!(ThunkState::Deferred, thunk.thunk_state());
+        assert_eq!(Bool(true), thunk.evaluate()?);
+        Ok(())
+    }
+
+    #[test]
+    fn test_scalar_thunk_materialize() -> IonResult<()> {
+        let thunk = ScalarThunk(ScalarType::Int, Thunk::defer(|| Ok(Int(5.into()))));
+        assert_eq!(ScalarType::Int, thunk.scalar_type());
+        assert_eq!(ThunkState::Deferred, thunk.thunk_state());
+        let mut new_thunk = thunk.materialize()?;
+        assert_eq!(ScalarType::Int, new_thunk.scalar_type());
+        assert_eq!(ThunkState::Materialized, new_thunk.thunk_state());
+        assert_eq!(Int(5.into()), new_thunk.no_memoize()?);
+        assert_eq!(ThunkState::Materialized, new_thunk.thunk_state());
+        Ok(())
+    }
+
+    #[test]
+    fn test_scalar_thunk_memoize() -> IonResult<()> {
+        let mut thunk = ScalarThunk(ScalarType::Float, Thunk::defer(|| Ok(Float(42.0))));
+        assert_eq!(ScalarType::Float, thunk.scalar_type());
+        assert_eq!(ThunkState::Deferred, thunk.thunk_state());
+        assert_eq!(Float(42.0), *thunk.memoize()?);
+        assert_eq!(ThunkState::Materialized, thunk.thunk_state());
+        Ok(())
+    }
+
+    #[rstest]
+    #[case::null_int(Content::Null(IonType::Int))]
+    #[case::scalar_deferred(
+        Content::Scalar(
+            ScalarThunk(ScalarType::Float,
+            Thunk::defer(|| Ok(ScalarValue::Float(5.0))))
+        )
+    )]
+    #[case::start_container(Content::StartContainer(ContainerType::List))]
+    #[case::start_container(Content::EndContainer(ContainerType::List))]
+    #[case::end_stream(Content::EndStream)]
+    fn test_materialize_content(#[case] content: Content) -> IonResult<()> {
+        let potential_copy = match &content {
+            Content::Null(ion_type) => Some(Content::Null(*ion_type)),
+            Content::StartContainer(container_type) => {
+                Some(Content::StartContainer(*container_type))
+            }
+            Content::EndContainer(container_type) => Some(Content::EndContainer(*container_type)),
+            Content::EndStream => Some(Content::EndStream),
+            Content::Scalar(_) => None,
+        };
+
+        match (potential_copy, content.materialize()?) {
+            (None, Content::Scalar(thunk)) => {
+                assert_eq!(ThunkState::Materialized, thunk.thunk_state())
+            }
+            (Some(copy), content) => match (copy, content) {
+                (Content::Null(copy_type), Content::Null(my_type)) => {
+                    assert_eq!(copy_type, my_type)
+                }
+                (Content::StartContainer(copy_type), Content::StartContainer(my_type)) => {
+                    assert_eq!(copy_type, my_type)
+                }
+                (Content::EndContainer(copy_type), Content::EndContainer(my_type)) => {
+                    assert_eq!(copy_type, my_type)
+                }
+                (Content::EndStream, Content::EndStream) => { /* nothing to assert. */ }
+                (copy, content) => panic!("Mismatch copy/content {:?} != {:?}", copy, content),
+            },
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+
+    #[template]
+    #[rstest]
+    #[case::null(Content::Null(IonType::Null), None)]
+    #[case::start_container(Content::StartContainer(ContainerType::List), None)]
+    #[case::end_container(Content::EndContainer(ContainerType::SExp), None)]
+    #[case::end_stream(Content::EndStream, None)]
+    #[case::scalar(
+        Content::Scalar(ScalarThunk(ScalarType::Int, Thunk::defer(|| Ok(Int(10.into()))))),
+        Some(Int(10.into()))
+    )]
+    fn memoize_template(#[case] mut content: Content, #[case] expected: Option<ScalarValue>) {}
+
+    #[apply(memoize_template)]
+    fn test_memoize_content(mut content: Content, expected: Option<ScalarValue>) -> IonResult<()> {
+        assert_eq!(expected.as_ref(), content.memoize_scalar()?);
+        match content {
+            Content::Scalar(thunk) => assert_eq!(ThunkState::Materialized, thunk.thunk_state()),
+            _ => { /*nothing to assert*/ }
+        }
+        Ok(())
+    }
+
+    #[apply(memoize_template)]
+    fn test_no_memoize_content(
+        mut content: Content,
+        expected: Option<ScalarValue>,
+    ) -> IonResult<()> {
+        assert_eq!(expected, content.no_memoize_scalar()?);
+        match content {
+            Content::Scalar(thunk) => assert_eq!(ThunkState::Deferred, thunk.thunk_state()),
+            _ => { /*nothing to assert*/ }
+        }
+        Ok(())
     }
 }
