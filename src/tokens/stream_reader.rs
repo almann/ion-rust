@@ -333,7 +333,12 @@ mod tests {
     use crate::element::Element;
     use crate::tokens::reader_stream::ReaderTokenStream;
     use crate::{IonData, ReaderBuilder};
-    /// very basic equivalence testing
+    use rstest::rstest;
+    use rstest_reuse::{self, *};
+    use std::collections::BTreeMap;
+    use std::iter::zip;
+
+    #[template]
     #[rstest]
     #[case::null("null")]
     #[case::null_int("null.int")]
@@ -365,7 +370,11 @@ mod tests {
     #[case::ann_empty_struct("c::{}")]
     #[case::struct_nested("{a:1, b:2, c:{d:3, e:{f:4, g:5, h:6}, j:7, k:8, l:{m:9}}}")]
     #[case::deeply_nested("([([([((a b c) d e), 1, 2] f g), 3, 4])])")]
-    fn test_read<S: AsRef<str>>(#[case] text: S) -> IonResult<()> {
+    fn test_cases<S: AsRef<str>>(#[case] text: S) {}
+
+    /// Very basic equivalence testing
+    #[apply(test_cases)]
+    fn test_element_equiv<S: AsRef<str>>(text: S) -> IonResult<()> {
         // read normally
         let expected = Element::read_all(text.as_ref())?;
 
@@ -385,7 +394,109 @@ mod tests {
         }
         Ok(())
     }
-    use rstest::rstest;
 
-    use std::iter::zip;
+    type AssertFn<'a> = Box<dyn FnMut() -> () + 'a>;
+
+    /// Just look at the top-level
+    #[apply(test_cases)]
+    fn test_top_level<S: AsRef<str>>(text: S) -> IonResult<()> {
+        // read normally
+        let expected = Element::read_all(text.as_ref())?;
+
+        // read "through" a stream
+        let stream: ReaderTokenStream<_> = ReaderBuilder::default().build(text.as_ref())?.into();
+        let reader: TokenStreamReader<_> = stream.into();
+        let reader_cell = RefCell::new(reader);
+
+        let mut count = 0;
+        for top_level in &expected {
+            count += 1;
+
+            macro_rules! asserter {
+                (@insert $name:ident, $reader:ident, $ion_type:expr => $exp:expr;) => {
+                    $name.insert($ion_type, Box::new(|| {
+                        let $reader =
+                        $exp
+                    }));
+                };
+                (@insert $name:ident, $reader:ident, $ion_type:expr => $exp:expr; $($rest:tt)*) => {
+                    asserter!(@insert table, $reader, $ion_type => $exp);
+                    asserter!(@insert table, $reader, $($rest)*);
+                };
+                ($reader:ident, $($rest:tt)*) => {
+                    {
+                        let mut table: BTreeMap<IonType, AssertFn> = BTreeMap::new();
+                        asserter!(@insert table, $reader, $($rest)*);
+                        table
+                    }
+                };
+            }
+            let mut assert_table = asserter!(
+                IonType::Null => assert!(reader.read_null().is_err());
+            );
+
+            // let mut assert_table: BTreeMap<IonType, AssertFn> = BTreeMap::from([
+            //     (
+            //         IonType::Null,
+            //         Box::new(|| assert!(reader.read_null().is_err())),
+            //     ),
+            //     (
+            //         IonType::Bool,
+            //         Box::new(|| assert!(reader.read_bool().is_err())),
+            //     ),
+            //     (
+            //         IonType::Int,
+            //         Box::new(|| assert!(reader.read_int().is_err())),
+            //     ),
+            //     (
+            //         IonType::Float,
+            //         Box::new(|| assert!(reader.read_f64().is_err())),
+            //     ),
+            //     (
+            //         IonType::Decimal,
+            //         Box::new(|| assert!(reader.read_decimal().is_err())),
+            //     ),
+            //     (IonType::Timestamp, &|| {
+            //         assert!(reader.read_timestamp().is_err())
+            //     }),
+            //     (IonType::Symbol, &|| assert!(reader.read_symbol().is_err())),
+            //     (IonType::String, &|| assert!(reader.read_string().is_err())),
+            //     (IonType::Clob, &|| assert!(reader.read_clob().is_err())),
+            //     (IonType::Blob, &|| assert!(reader.read_blob().is_err())),
+            // ]);
+
+            assert!(reader.parent_type().is_none());
+            match reader.next()? {
+                StreamItem::Value(ion_type) => {
+                    assert_eq!(top_level.ion_type(), ion_type);
+                    match ion_type {
+                        IonType::Null => {}
+                        IonType::Bool => {}
+                        IonType::Int => {}
+                        IonType::Float => {}
+                        IonType::Decimal => {}
+                        IonType::Timestamp => {}
+                        IonType::Symbol => {}
+                        IonType::String => {}
+                        IonType::Clob => {}
+                        IonType::Blob => {}
+                        IonType::List => {}
+                        IonType::SExp => {}
+                        IonType::Struct => {}
+                    };
+                }
+                StreamItem::Null(ion_type) => {}
+                StreamItem::Nothing => {
+                    unreachable!("Should not see nothing!");
+                }
+            };
+
+            for (_, assert_fn) in &assert_table {
+                assert_fn();
+            }
+        }
+        assert_eq!(expected.len(), count);
+        assert!(matches!(reader.next(), Ok(StreamItem::Nothing)));
+        Ok(())
+    }
 }
