@@ -640,9 +640,8 @@ mod tests {
     #[apply(memoize_template)]
     fn test_memoize_content(mut content: Content, expected: Option<ScalarValue>) -> IonResult<()> {
         assert_eq!(expected.as_ref(), content.memoize_scalar()?);
-        match content {
-            Content::Scalar(thunk) => assert_eq!(ThunkState::Materialized, thunk.thunk_state()),
-            _ => { /*nothing to assert*/ }
+        if let Content::Scalar(thunk) = content {
+            assert_eq!(ThunkState::Materialized, thunk.thunk_state());
         }
         Ok(())
     }
@@ -653,9 +652,8 @@ mod tests {
         expected: Option<ScalarValue>,
     ) -> IonResult<()> {
         assert_eq!(expected, content.no_memoize_scalar()?);
-        match content {
-            Content::Scalar(thunk) => assert_eq!(ThunkState::Deferred, thunk.thunk_state()),
-            _ => { /*nothing to assert*/ }
+        if let Content::Scalar(thunk) = content {
+            assert_eq!(ThunkState::Deferred, thunk.thunk_state());
         }
         Ok(())
     }
