@@ -421,6 +421,10 @@ mod tests {
         let stream: ReaderTokenStream<_> = ReaderBuilder::default().build(text.as_ref())?.into();
         let mut reader: TokenStreamReader<_> = stream.into();
 
+        assert_eq!(None, reader.ion_type());
+        assert_eq!(None, reader.parent_type());
+        assert_eq!((1, 0), reader.ion_version());
+
         let mut count = 0;
         for top_level in &expected {
             count += 1;
@@ -429,6 +433,7 @@ mod tests {
             match reader.next()? {
                 StreamItem::Value(ion_type) => {
                     assert_eq!(top_level.ion_type(), ion_type);
+                    assert_eq!(Some(ion_type), reader.ion_type());
                     assert!(!reader.is_null());
                     assert!(reader.read_null().is_err());
                     // let us permute the the Ion types to make sure the read surface
@@ -482,6 +487,7 @@ mod tests {
                                 IonType::List | IonType::SExp | IonType::Struct => {
                                     reader.step_in()?;
                                     assert_eq!(1, reader.depth());
+                                    assert_eq!(None, reader.ion_type());
                                     assert_eq!(Some(my_type), reader.parent_type());
                                     reader.step_out()?;
                                 }
@@ -507,6 +513,7 @@ mod tests {
                     }
                 }
                 StreamItem::Null(ion_type) => {
+                    assert_eq!(Some(ion_type), reader.ion_type());
                     assert!(reader.is_null());
                     assert_eq!(ion_type, reader.read_null()?);
                     assert!(reader.read_bool().is_err());
