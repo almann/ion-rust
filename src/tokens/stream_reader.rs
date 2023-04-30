@@ -169,9 +169,10 @@ where
     }
 
     fn ion_type(&self) -> Option<IonType> {
-        match &self.curr_token_cell {
-            None => None,
-            Some(token_cell) => {
+        match (self.curr_item, &self.curr_token_cell) {
+            (StreamItem::Nothing, _) => None,
+            (_, None) => None,
+            (_, Some(token_cell)) => {
                 let token = token_cell.borrow();
                 match token.content() {
                     Content::Null(ion_type) => Some(*ion_type),
