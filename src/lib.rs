@@ -163,6 +163,7 @@
 // XXX this top-level import is required because of the macro factoring of rstest_reuse
 // XXX Clippy incorrectly indicates that this is redundant
 #[cfg(test)]
+#[allow(unused_imports)]
 #[allow(clippy::single_component_path_imports)]
 use rstest_reuse;
 
