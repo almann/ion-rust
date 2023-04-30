@@ -293,46 +293,6 @@ impl<'a> Content<'a> {
             Ok(None)
         }
     }
-
-    /// Indicates if this content is a null value and its corresponding type.
-    pub fn null(&self) -> Option<IonType> {
-        match self {
-            Content::Null(ion_type) => Some(*ion_type),
-            _ => None,
-        }
-    }
-
-    /// Indicates if this content is a scalar value (that may be deferred) and the corresponding type.
-    pub fn scalar(&self) -> Option<ScalarType> {
-        match self {
-            Content::Scalar(thunk) => Some(thunk.scalar_type()),
-            _ => None,
-        }
-    }
-
-    /// Indicates if this content is a start of a container and what type it is.
-    pub fn start_container(&self) -> Option<ContainerType> {
-        match self {
-            Content::StartContainer(container_type) => Some(*container_type),
-            Content::EndContainer(_) => None,
-            _ => None,
-        }
-    }
-
-    /// Indicates if this content is an end of a container and what type it is.
-    pub fn end_container(&self) -> Option<ContainerType> {
-        use Content::*;
-        match self {
-            StartContainer(_) => None,
-            EndContainer(container_type) => Some(*container_type),
-            _ => None,
-        }
-    }
-
-    /// Indicates if this content  is the end of a stream.
-    pub fn is_end_stream(&self) -> bool {
-        matches!(self, Content::EndStream)
-    }
 }
 
 impl From<ScalarValue> for Content<'static> {
@@ -504,6 +464,15 @@ mod tests {
     #[case::cont_sexp(SExp, IonType::SExp)]
     #[case::cont_list(List, IonType::List)]
     #[case::cont_struct(Struct, IonType::Struct)]
+    #[case::scalar_t_bool(ScalarType::Bool, IonType::Bool)]
+    #[case::scalar_t_int(ScalarType::Int, IonType::Int)]
+    #[case::scalar_t_float(ScalarType::Float, IonType::Float)]
+    #[case::scalar_t_decimal(ScalarType::Decimal, IonType::Decimal)]
+    #[case::scalar_t_timestamp(ScalarType::Timestamp, IonType::Timestamp)]
+    #[case::scalar_t_symbol(ScalarType::Symbol, IonType::Symbol)]
+    #[case::scalar_t_string(ScalarType::String, IonType::String)]
+    #[case::scalar_t_clob(ScalarType::Clob, IonType::Clob)]
+    #[case::scalar_t_blob(ScalarType::Blob, IonType::Blob)]
     #[case::scalar_bool(Bool(false), Value::Bool(false))]
     #[case::scalar_int(Int(3.into()), Value::Int(3.into()))]
     #[case::scalar_float(Float(1.1), Value::Float(1.1))]
