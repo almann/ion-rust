@@ -196,9 +196,9 @@ mod writer;
 
 // Experimental Streaming APIs
 #[cfg(feature = "experimental-streaming")]
-pub(crate) mod thunk;
+pub mod thunk;
 #[cfg(feature = "experimental-streaming")]
-pub(crate) mod tokens;
+pub mod tokens;
 
 // Experimental Ion 1.1 APIs
 #[cfg(feature = "experimental-ion11")]

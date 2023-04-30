@@ -18,6 +18,9 @@ use std::fmt::{Display, Formatter};
 pub(crate) mod reader_stream;
 pub(crate) mod stream_reader;
 
+pub use reader_stream::ReaderTokenStream;
+pub use stream_reader::TokenStreamReader;
+
 /// Generic display for anything that could be converted to `IonType`.
 fn display_type<T>(value: T, f: &mut Formatter<'_>) -> std::fmt::Result
 where
