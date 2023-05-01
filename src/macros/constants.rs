@@ -20,10 +20,10 @@ pub(crate) mod syntax {
     pub const FLOAT32: &str = "float32";
     pub const FLOAT64: &str = "float64";
 
-    pub const VARUINT: &str = "varuint";
-    pub const VARINT: &str = "varint";
-    pub const VARSTR: &str = "varstr";
-    pub const VARSYM: &str = "varsym";
+    pub const VAR_UINT: &str = "var_uint";
+    pub const VAR_INT: &str = "var_int";
+    pub const VAR_STR: &str = "var_str";
+    pub const VAR_SYM: &str = "var_sym";
 
     pub const ANY: &str = "any";
     pub const NUMBER: &str = "number";

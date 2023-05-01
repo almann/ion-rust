@@ -24,11 +24,11 @@ where
         S: AsRef<str>;
 }
 
-/// Macro types that are encoded without a type tag.
+/// Macro types that are encoded using a low-level Ion encoding primitive
 ///
 /// These types are structural constrained types over their general Ion equivalent.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum TaglessType {
+pub enum PrimitiveType {
     UInt8,
     UInt16,
     UInt32,
@@ -46,12 +46,12 @@ pub enum TaglessType {
     VarSym,
 }
 
-impl ParseStr for TaglessType {
+impl ParseStr for PrimitiveType {
     fn parse_str<S>(as_str: S) -> IonResult<Self>
     where
         S: AsRef<str>,
     {
-        use TaglessType::*;
+        use PrimitiveType::*;
         let text = as_str.as_ref();
         match text {
             UINT8 => Ok(UInt8),
@@ -65,18 +65,18 @@ impl ParseStr for TaglessType {
             FLOAT16 => Ok(Float16),
             FLOAT32 => Ok(Float32),
             FLOAT64 => Ok(Float64),
-            VARUINT => Ok(VarUInt),
-            VARINT => Ok(VarInt),
-            VARSTR => Ok(VarStr),
-            VARSYM => Ok(VarSym),
+            VAR_UINT => Ok(VarUInt),
+            VAR_INT => Ok(VarInt),
+            VAR_STR => Ok(VarStr),
+            VAR_SYM => Ok(VarSym),
             _ => illegal_operation(format!("'{}' is not a tagless type", text)),
         }
     }
 }
 
-impl Display for TaglessType {
+impl Display for PrimitiveType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        use TaglessType::*;
+        use PrimitiveType::*;
         write!(
             f,
             "{}",
@@ -92,10 +92,10 @@ impl Display for TaglessType {
                 Float16 => FLOAT16,
                 Float32 => FLOAT32,
                 Float64 => FLOAT64,
-                VarUInt => VARUINT,
-                VarInt => VARINT,
-                VarStr => VARSTR,
-                VarSym => VARSYM,
+                VarUInt => VAR_UINT,
+                VarInt => VAR_INT,
+                VarStr => VAR_STR,
+                VarSym => VAR_SYM,
             }
         )
     }
@@ -197,87 +197,97 @@ impl Display for Cardinality {
     }
 }
 
-/// Cardinality of arguments for a macro parameter.
+/// Indicates a normal parameter or *rest* parameter.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum ArgCardinality {
-    Common(Cardinality),
+pub enum ParameterMode {
+    Normal,
     Rest,
-}
-
-impl ParseStr for ArgCardinality {
-    fn parse_str<S>(as_str: S) -> IonResult<Self>
-    where
-        S: AsRef<str>,
-    {
-        use ArgCardinality::*;
-        let text = as_str.as_ref();
-        if let Ok(cardinality) = Cardinality::parse_str(text) {
-            return Ok(Common(cardinality));
-        }
-        match text {
-            REST_SIGIL => Ok(Rest),
-            _ => illegal_operation(format!("'{}' is not an argument cardinality", text)),
-        }
-    }
-}
-
-impl ArgCardinality {
-    /// Returns the common [`Cardinality`] of this argument cardinality.
-    /// [`ArgCardinality::Rest`] is lowered into [`Cardinality::ZeroOrMore`]
-    fn cardinality(self) -> Cardinality {
-        match self {
-            ArgCardinality::Common(c) => c,
-            ArgCardinality::Rest => Cardinality::ZeroOrMore,
-        }
-    }
-}
-
-impl From<Cardinality> for ArgCardinality {
-    fn from(value: Cardinality) -> Self {
-        Self::Common(value)
-    }
-}
-
-impl Display for ArgCardinality {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        use ArgCardinality::*;
-        match self {
-            Common(c) => write!(f, "{}", c),
-            Rest => write!(f, "{}", REST_SIGIL),
-        }
-    }
 }
 
 /// The signature of a single parameter of a macro.
 ///
 /// Models the _argument cardinality_ and type--what types of sub-expressions are allowed in the
 /// argument position for the parameter and how many are allowed at that position.  Also models
-/// the _value cardinality_ and type--which are the value types of values that the argument(s)
-/// must evaluate to and the number of values.
+/// the _stream cardinality_--which is the number of values a parameter must evaluate to.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct ParamType {
-    arg_type: Box<StaticType>,
-    arg_cardinality: ArgCardinality,
-    val_type: Box<ValueType>,
-    val_cardinality: Cardinality,
+    arg_type: StaticType,
+    arg_cardinality: Cardinality,
+    stream_cardinality: Cardinality,
+    param_mode: ParameterMode,
+}
+
+impl ParamType {
+    pub fn try_new(
+        arg_type: StaticType,
+        arg_cardinality: Cardinality,
+        stream_cardinality: Cardinality,
+        param_mode: ParameterMode,
+    ) -> IonResult<Self> {
+        use Cardinality::*;
+        use ParameterMode::*;
+
+        // validate mode/cardinalities
+        match (param_mode, arg_cardinality, stream_cardinality) {
+            (Normal, a_card, s_card) if a_card == s_card => {
+                // ! ? * +
+            }
+            (Normal, ExactlyOne, ZeroOrMore) if arg_type.is_tagged() => {
+                // !*
+            }
+            (Normal, ExactlyOne, OneOrMore) if arg_type.is_tagged() => {
+                // !+
+            }
+            (Normal, ZeroOrOne, ZeroOrMore) if arg_type.is_tagged() => {
+                // ?*
+            }
+            (Rest, ZeroOrMore, ZeroOrMore) => {
+                // ...
+            }
+            (Normal, a_card, s_card) => {
+                return illegal_operation(format!(
+                    "Mismatched cardinalities for param type: {}{}",
+                    a_card, s_card
+                ))
+            }
+            (Rest, a_card, s_card) => {
+                return illegal_operation(format!(
+                    "Rest parameter must be * cardinality: {}{}",
+                    a_card, s_card
+                ))
+            }
+        }
+
+        Ok(Self {
+            arg_type,
+            arg_cardinality,
+            stream_cardinality,
+            param_mode,
+        })
+    }
 }
 
 impl Display for ParamType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use Cardinality::*;
+        use ParameterMode::*;
+
+        write!(f, "{}", self.arg_type)?;
         match (
-            &*self.arg_type,
+            self.param_mode,
             self.arg_cardinality,
-            &*self.val_type,
-            self.val_cardinality,
+            self.stream_cardinality,
         ) {
-            (StaticType::Value(arg_type), ArgCardinality::Common(arg_card), val_type, val_card)
-                if *arg_type == *val_type && arg_card == val_card =>
-            {
-                write!(f, "{}{}", arg_type, arg_card)
+            (Normal, a_card, s_card) if a_card == s_card => {
+                write!(f, "{}", a_card)
             }
-            (arg_type, arg_card, val_type, val_card) => {
-                write!(f, "{}{} -> {}{}", arg_type, arg_card, val_type, val_card)
+            (Normal, a_card, s_card) if a_card != s_card => {
+                write!(f, "{}{}", a_card, s_card)
             }
+            (Rest, ZeroOrMore, ZeroOrMore) => {
+                write!(f, "{}", REST_SIGIL)
+            }
+            (_, _, _) => unreachable!(),
         }
     }
 }
@@ -330,7 +340,7 @@ impl Display for MacroType {
 pub enum ValueType {
     Union(UnionType),
     Tagged(IonType),
-    Tagless(TaglessType),
+    Primitive(PrimitiveType),
 }
 
 impl Display for ValueType {
@@ -339,7 +349,7 @@ impl Display for ValueType {
         match self {
             Union(t) => write!(f, "{}", t),
             Tagged(t) => write!(f, "{}", t),
-            Tagless(t) => write!(f, "{}", t),
+            Primitive(t) => write!(f, "{}", t),
         }
     }
 }
@@ -351,6 +361,15 @@ pub enum StaticType {
     Value(ValueType),
     /// A macro-shaped type.
     Macro(Box<MacroType>),
+}
+
+impl StaticType {
+    /// Determines if a type is self-described with a type tag or not.
+    fn is_tagged(&self) -> bool {
+        use StaticType::*;
+        use ValueType::*;
+        matches!(self, Value(Union(_) | Tagged(_)))
+    }
 }
 
 impl Display for StaticType {
@@ -366,7 +385,7 @@ impl Display for StaticType {
 #[cfg(test)]
 mod tests {
     use super::Cardinality::*;
-    use super::TaglessType::*;
+    use super::PrimitiveType::*;
     use super::UnionType::*;
     use super::*;
     use crate::{IonResult, IonType};
@@ -385,10 +404,10 @@ mod tests {
     #[case::float16("float16", Float16)]
     #[case::float32("float32", Float32)]
     #[case::float64("float64", Float64)]
-    #[case::varuint("varuint", VarUInt)]
-    #[case::varint("varint", VarInt)]
-    #[case::varstr("varstr", VarStr)]
-    #[case::varsym("varsym", VarSym)]
+    #[case::varuint("var_uint", VarUInt)]
+    #[case::varint("var_int", VarInt)]
+    #[case::varstr("var_str", VarStr)]
+    #[case::varsym("var_sym", VarSym)]
     #[case::any("any", Any)]
     #[case::number("number", Number)]
     #[case::exact("exact", Exact)]
@@ -399,11 +418,6 @@ mod tests {
     #[case::zero_or_one("?", ZeroOrOne)]
     #[case::zero_or_more("*", ZeroOrMore)]
     #[case::one_or_more("+", OneOrMore)]
-    #[case::arg_exactly_one("!", ArgCardinality::Common(ExactlyOne))]
-    #[case::arg_zero_or_one("?", ArgCardinality::Common(ZeroOrOne))]
-    #[case::arg_zero_or_more("*", ArgCardinality::Common(ZeroOrMore))]
-    #[case::arg_one_or_more("+", ArgCardinality::Common(OneOrMore))]
-    #[case::arg_rest("...", ArgCardinality::Rest)]
     fn test_type_parsing<T>(#[case] text: &str, #[case] expected_type: T) -> IonResult<()>
     where
         T: ParseStr + PartialEq + Debug + Display,
@@ -430,7 +444,7 @@ mod tests {
     #[case::any("any")]
     #[case::float8("float8")]
     fn test_tagless_type_invalid(#[case] bad_text: &str) {
-        assert_invalid_parse::<_, TaglessType>(bad_text)
+        assert_invalid_parse::<_, PrimitiveType>(bad_text)
     }
 
     #[rstest]
@@ -451,16 +465,6 @@ mod tests {
     #[case::rest("...")]
     fn test_cardinality_invalid(#[case] bad_text: &str) {
         assert_invalid_parse::<_, Cardinality>(bad_text)
-    }
-
-    #[rstest]
-    #[case::bangbang("!!")]
-    #[case::at("@")]
-    #[case::foobar("foobar")]
-    #[case::int32("int32")]
-    #[case::inexact("any")]
-    fn test_arg_cardinality_invalid(#[case] bad_text: &str) {
-        assert_invalid_parse::<_, ArgCardinality>(bad_text)
     }
 
     #[rstest]
