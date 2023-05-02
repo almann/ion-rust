@@ -2,7 +2,7 @@
 
 //! Provides support Ion 1.1 macros (not to be confused with Rust macros).
 
-use crate::tokens::ScalarType::Symbol;
+use crate::result::decoding_error_raw;
 use crate::tokens::{Instruction, TokenStream};
 use crate::IonResult;
 
@@ -35,9 +35,8 @@ where
     Self: Sized,
 {
     /// Parse the given stream into an instance of this value.
-    fn parse_ion<'a, R, S>(as_stream: R) -> IonResult<Self>
+    fn parse_ion<'a, S>(stream: &mut S) -> IonResult<Self>
     where
-        R: AsMut<S>,
         S: TokenStream<'a>;
 }
 
@@ -45,17 +44,16 @@ impl<T> ParseIon for T
 where
     T: ParseStr,
 {
-    fn parse_ion<'a, R, S>(mut as_stream: R) -> IonResult<Self>
+    fn parse_ion<'a, S>(stream: &mut S) -> IonResult<Self>
     where
-        R: AsMut<S>,
         S: TokenStream<'a>,
     {
-        use crate::tokens::ScalarValue::*;
-        let stream = as_stream.as_mut();
-        let _sym = stream
-            .next_token(Instruction::Next)?
+        let mut token = stream.next_token(Instruction::Next)?;
+        let text = token
             .has_no_annotations()?
-            .symbol()?;
-        todo!()
+            .symbol()?
+            .text()
+            .ok_or_else(|| decoding_error_raw("No text symbol"))?;
+        T::parse_str(text)
     }
 }

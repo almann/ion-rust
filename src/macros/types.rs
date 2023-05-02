@@ -358,6 +358,18 @@ impl StaticType {
     }
 }
 
+impl From<ValueType> for StaticType {
+    fn from(value: ValueType) -> Self {
+        StaticType::Value(value)
+    }
+}
+
+impl From<MacroType> for StaticType {
+    fn from(value: MacroType) -> Self {
+        StaticType::Macro(Box::new(value))
+    }
+}
+
 impl Display for StaticType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         use StaticType::*;
@@ -371,14 +383,34 @@ impl Display for StaticType {
 #[cfg(test)]
 mod tests {
     use super::Cardinality::*;
-    use super::ParameterMode::*;
     use super::PrimitiveType::*;
     use super::UnionType::*;
     use super::*;
-    use crate::{IonResult, IonType};
+    use crate::macros::ParseIon;
+    use crate::tokens::{Instruction, ReaderTokenStream, TokenStream};
+    use crate::{IonResult, IonType, ReaderBuilder};
     use rstest::rstest;
     use std::fmt::Debug;
 
+    /// Wraps the given text source in parenthesis to get s-expression context.
+    fn do_test_multi_parsing<T>(text: &str, expected_text: &str, expected: T) -> IonResult<()>
+    where
+        T: ParseIon + PartialEq + Debug + Display,
+    {
+        // wrap in an s-expression
+        let ion_text = format!("({})", text);
+        let reader = ReaderBuilder::new().build(ion_text.as_str())?;
+        let mut stream = ReaderTokenStream::from(reader);
+        // go past the start of the s-expression
+        stream.next_token(Instruction::Next)?;
+        let actual_type = T::parse_ion(&mut stream)?;
+        assert_eq!(expected, actual_type);
+        assert_eq!(expected_text, format!("{}", actual_type).as_str());
+        Ok(())
+    }
+
+    /// Parses things that can be trivially parsed as [`ParseIon`] via [`ParseStr`]
+    /// with a Display that round-trips.
     #[rstest]
     #[case::uint8("uint8", UInt8)]
     #[case::uint16("uint16", UInt16)]
@@ -405,14 +437,11 @@ mod tests {
     #[case::zero_or_one("?", ZeroOrOne)]
     #[case::zero_or_more("*", ZeroOrMore)]
     #[case::one_or_more("+", OneOrMore)]
-    fn test_type_parsing<T>(#[case] text: &str, #[case] expected_type: T) -> IonResult<()>
+    fn test_single_symbol_parsing<T>(#[case] text: &str, #[case] expected: T) -> IonResult<()>
     where
-        T: ParseStr + PartialEq + Debug + Display,
+        T: ParseIon + PartialEq + Debug + Display,
     {
-        let actual_type = T::parse_str(text)?;
-        assert_eq!(expected_type, actual_type);
-        assert_eq!(text, format!("{}", actual_type).as_str());
-        Ok(())
+        do_test_multi_parsing(text, text, expected)
     }
 
     fn assert_invalid_parse<S, T>(bad_text: S)
@@ -424,6 +453,19 @@ mod tests {
             panic!("Parsed invalid string as {}", t)
         }
     }
+
+    // #[rstest]
+    // #[case("string !*", "string!*", try_pt())]
+    // fn test_multi_parsing<T>(
+    //     #[case] text: &str,
+    //     #[case] expected_text: &str,
+    //     #[case] expected: T,
+    // ) -> IonResult<()>
+    // where
+    //     T: ParseIon + PartialEq + Debug + Display,
+    // {
+    //     do_test_multi_parsing(text, expected_text, expected)
+    // }
 
     #[rstest]
     #[case::bad_case("Int8")]
@@ -453,12 +495,6 @@ mod tests {
     fn test_cardinality_invalid(#[case] bad_text: &str) {
         assert_invalid_parse::<_, Cardinality>(bad_text)
     }
-
-    // #[rstest]
-    // #[case::p_int("int")]
-    // fn test_parameter_type_display(#[case] expected: &str, param_type: ParamType) -> IonResult<()> {
-    //     Ok(())
-    // }
 
     #[rstest]
     #[case("() -> int", (ValueType::Tagged(IonType::Int), []).into())]
