@@ -9,10 +9,11 @@
 //! with values without pulling in fully materializing the tree.
 
 use crate::element::{Annotations, Bytes, Value};
-use crate::result::illegal_operation;
+use crate::result::{decoding_error, illegal_operation};
 use crate::text::text_formatter::IonValueFormatter;
 use crate::thunk::{Thunk, ThunkState};
 use crate::{Decimal, Int, IonError, IonResult, IonType, Str, Symbol, Timestamp};
+use delegate::delegate;
 use std::fmt::{Display, Formatter};
 
 pub(crate) mod reader_stream;
@@ -276,6 +277,20 @@ impl<'a> Content<'a> {
             Ok(None)
         }
     }
+
+    /// Returns a reference to the underlying symbol if it is in fact a non-null symbol.
+    pub fn symbol(&mut self) -> IonResult<&Symbol> {
+        match self {
+            Content::Scalar(thunk) => match thunk.memoize() {
+                Ok(ScalarValue::Symbol(symbol)) => Ok(symbol),
+                Ok(other_value) => decoding_error(format!("Not a symbol: {}", other_value)),
+                Err(e) => Err(e),
+            },
+            _ => decoding_error(format!("Not a symbol: {:?}", self)),
+        }
+    }
+
+    // TODO add all the expect_XXX we want/need
 }
 
 impl From<ScalarValue> for Content<'static> {
@@ -381,6 +396,31 @@ impl<'a> Token<'a> {
             Err(e) => Err(e),
         }
     }
+
+    /// Materializes in place and returns a reference to the annotations if possible.
+    #[inline]
+    pub fn annotations(&mut self) -> IonResult<&Annotations> {
+        self.annotations.memoize()
+    }
+
+    /// Returns a mutable reference to itself if there are no annotations
+    ///
+    /// Returns [`IonError::DecodingError`] if there are annotations.
+    #[inline]
+    pub fn has_no_annotations(&mut self) -> IonResult<&mut Self> {
+        match self.annotations()?.is_empty() {
+            true => Ok(self),
+            false => decoding_error(format!("Expected no annotations on {:?}", self)),
+        }
+    }
+
+    delegate! {
+        to self.content {
+            pub fn symbol(&mut self) -> IonResult<&Symbol>;
+        }
+    }
+
+    // TODO add all the scalar accessors we want/need
 }
 
 impl<'a> From<Content<'a>> for Token<'a> {

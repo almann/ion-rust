@@ -5,24 +5,10 @@
 //! This goes above the runtime type system of Ion within the macro system.
 
 use crate::macros::constants::syntax::*;
+use crate::macros::ParseStr;
 use crate::result::illegal_operation;
 use crate::{IonResult, IonType};
 use std::fmt::{Display, Formatter};
-
-// XXX this trait is here to allow us to parse generically from anything referencable as a &str
-//     we cannot do this with TryFrom
-// TODO evaluate if this should even be here...
-
-/// Generically parse from anything that can be represented as `&str`.
-pub trait ParseStr
-where
-    Self: Sized,
-{
-    /// Parse the given `&str` reference into this type.
-    fn parse_str<S>(as_str: S) -> IonResult<Self>
-    where
-        S: AsRef<str>;
-}
 
 /// Macro types that are encoded using a low-level Ion encoding primitive
 ///
@@ -385,6 +371,7 @@ impl Display for StaticType {
 #[cfg(test)]
 mod tests {
     use super::Cardinality::*;
+    use super::ParameterMode::*;
     use super::PrimitiveType::*;
     use super::UnionType::*;
     use super::*;
@@ -466,6 +453,12 @@ mod tests {
     fn test_cardinality_invalid(#[case] bad_text: &str) {
         assert_invalid_parse::<_, Cardinality>(bad_text)
     }
+
+    // #[rstest]
+    // #[case::p_int("int")]
+    // fn test_parameter_type_display(#[case] expected: &str, param_type: ParamType) -> IonResult<()> {
+    //     Ok(())
+    // }
 
     #[rstest]
     #[case("() -> int", (ValueType::Tagged(IonType::Int), []).into())]
