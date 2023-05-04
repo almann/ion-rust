@@ -8,6 +8,8 @@ use crate::IonResult;
 
 pub(crate) mod constants;
 
+pub mod ident;
+pub mod type_env;
 pub mod types;
 
 // XXX this trait is here to allow us to parse generically from anything referencable as a &str
