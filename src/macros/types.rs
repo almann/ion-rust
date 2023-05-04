@@ -9,6 +9,7 @@ use crate::macros::ParseStr;
 use crate::result::illegal_operation;
 use crate::{IonResult, IonType};
 use std::fmt::{Display, Formatter};
+use std::rc::Rc;
 
 /// Macro types that are encoded using a low-level Ion encoding primitive
 ///
@@ -185,7 +186,7 @@ impl Display for Cardinality {
 
 /// Indicates a normal parameter or *rest* parameter.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum ParameterMode {
+pub enum ParamMode {
     Normal,
     Rest,
 }
@@ -200,18 +201,18 @@ pub struct ParamType {
     arg_type: StaticType,
     arg_cardinality: Cardinality,
     stream_cardinality: Cardinality,
-    param_mode: ParameterMode,
+    param_mode: ParamMode,
 }
 
 impl ParamType {
-    pub fn try_new(
+    fn try_new(
         arg_type: StaticType,
         arg_cardinality: Cardinality,
         stream_cardinality: Cardinality,
-        param_mode: ParameterMode,
+        param_mode: ParamMode,
     ) -> IonResult<Self> {
         use Cardinality::*;
-        use ParameterMode::*;
+        use ParamMode::*;
 
         // validate mode/cardinalities
         match (param_mode, arg_cardinality, stream_cardinality) {
@@ -256,7 +257,7 @@ impl ParamType {
 impl Display for ParamType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         use Cardinality::*;
-        use ParameterMode::*;
+        use ParamMode::*;
 
         write!(f, "{}", self.arg_type)?;
         match (
@@ -346,10 +347,47 @@ pub enum StaticType {
     /// A regular value type.
     Value(ValueType),
     /// A macro-shaped type.
-    Macro(Box<MacroType>),
+    Macro(Rc<MacroType>),
 }
 
 impl StaticType {
+    /// Builds a parameter type from this static type where the arg/stream cardinality is the same
+    fn to_param(&self, cardinality: Cardinality) -> ParamType {
+        ParamType::try_new(self.clone(), cardinality, cardinality, ParamMode::Normal)
+            .expect("Unable to create a valid type parameter")
+    }
+
+    /// Builds a parameter type from this static type where the arg/stream cardinality is not
+    /// the same.
+    ///
+    /// Note that this is a fallible operation as not all combinations are valid, specifically
+    /// only tagged types allow for different cardinalities and it is restricted to `!*`, `!+`, and
+    /// `?*`.
+    pub fn try_param(
+        &self,
+        arg_cardinality: Cardinality,
+        stream_cardinality: Cardinality,
+    ) -> IonResult<ParamType> {
+        ParamType::try_new(
+            self.clone(),
+            arg_cardinality,
+            stream_cardinality,
+            ParamMode::Normal,
+        )
+    }
+
+    /// Builds a [`ParamType`] from this static type, where it is a [`...`](ParamMode::Rest)
+    /// parameter.
+    fn to_rest_param(&self) -> ParamType {
+        ParamType::try_new(
+            self.clone(),
+            Cardinality::ZeroOrMore,
+            Cardinality::ZeroOrMore,
+            ParamMode::Rest,
+        )
+        .expect("Unable to create a valid rest parameter type")
+    }
+
     /// Determines if a type is self-described with a type tag or not.
     fn is_tagged(&self) -> bool {
         use StaticType::*;
@@ -366,7 +404,7 @@ impl From<ValueType> for StaticType {
 
 impl From<MacroType> for StaticType {
     fn from(value: MacroType) -> Self {
-        StaticType::Macro(Box::new(value))
+        StaticType::Macro(Rc::new(value))
     }
 }
 
@@ -379,6 +417,8 @@ impl Display for StaticType {
         }
     }
 }
+
+pub struct ModuleType {}
 
 #[cfg(test)]
 mod tests {
