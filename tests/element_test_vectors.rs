@@ -5,8 +5,7 @@ use ion_rs::element::writer::{ElementWriter, Format, TextKind};
 use ion_rs::element::{Element, Sequence};
 use ion_rs::result::{decoding_error, IonError, IonResult};
 use ion_rs::{
-    BinaryWriterBuilder, IonData, IonReader, IonWriter, Reader, StreamItem, Symbol,
-    TextWriterBuilder,
+    BinaryWriterBuilder, IonData, IonReader, IonWriter, StreamItem, Symbol, TextWriterBuilder,
 };
 
 use std::fs::read;
