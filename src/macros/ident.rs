@@ -106,7 +106,7 @@ impl MacroId {
 ///
 /// Macro identifiers are unique, but more than one qualified name is allowed to map to
 /// a given macro identifier through aliasing them in a module's macro table.
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct MacroName {
     id: Rc<MacroId>,
     module_name: ModuleName,
@@ -137,4 +137,46 @@ impl MacroName {
     pub fn address(&self) -> usize {
         self.address
     }
+}
+
+/// An unqualified name or address of a Macro.
+///
+/// This on its own cannot identify a macro.  An environment is necessary to determine
+/// if and what this refers to.  E.g., the *macro table* of an *encoding context* for
+/// E-Expressions.
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum UnqualifiedMacroRef {
+    Name(Name),
+    Address(usize),
+}
+
+/// Reference to a macro, which may be [*unqualified*][u], [*partially qualified*][p],
+/// or [*fully qualified*][f].
+///
+/// On its own, a reference does is not resolved to some unique macro.  See [`ResolvedMacroRef`]
+/// for details.
+///
+/// [u]: Self::Unqualified
+/// [p]: Self::Partial
+/// [f]: Self::Full
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum MacroRef {
+    /// An *unqualified* macro reference for which no module is implied.
+    Unqualified(UnqualifiedMacroRef),
+
+    /// A *partially* qualified reference, generally valid for an environment where
+    /// the reference is referring to the *current* module being defined where a
+    /// [`ModuleName`] may not be available to reference a macro.
+    Partial(UnqualifiedMacroRef),
+
+    /// A *fully* qualified reference by referring to some module by name and some macro
+    /// within that module.
+    Full(Name, UnqualifiedMacroRef),
+}
+
+/// A macro reference that has been resolved to the underlying [`MacroId`].
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct ResolvedMacroRef {
+    id: MacroId,
+    reference: MacroRef,
 }
