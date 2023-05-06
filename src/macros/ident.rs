@@ -135,6 +135,6 @@ impl MacroName {
 
     /// Returns the address of this name in the module it was defined in
     pub fn address(&self) -> usize {
-        return self.address;
+        self.address
     }
 }
