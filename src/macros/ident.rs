@@ -3,9 +3,14 @@
 //! Names and identifiers for macros.
 
 use crate::macros::ParseStr;
+use crate::result::illegal_operation;
 use crate::IonResult;
+use std::borrow::Borrow;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
+
+// TODO we expose shared pointers here--we might want to consider something like 'archery'
+//      to abstract over this
 
 /// An identifier that represents a name of a parameter, module, or macro.
 ///
@@ -32,6 +37,18 @@ impl ParseStr for Name {
     }
 }
 
+impl Borrow<str> for Name {
+    fn borrow(&self) -> &str {
+        self.text()
+    }
+}
+
+impl AsRef<str> for Name {
+    fn as_ref(&self) -> &str {
+        self.text()
+    }
+}
+
 impl Display for Name {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.text)
@@ -45,7 +62,7 @@ impl Display for Name {
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone)]
 pub enum ModuleId {
     /// A module defined inline in an encoding context.
-    Inline(Name),
+    Inline(Rc<Name>),
     /// A module defined in some catalog entry which has a name and a version.
     Catalog(String, usize),
 }
@@ -57,10 +74,14 @@ pub enum ModuleId {
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone)]
 pub struct ModuleName {
     id: Rc<ModuleId>,
-    name: Name,
+    name: Rc<Name>,
 }
 
 impl ModuleName {
+    pub fn new(id: Rc<ModuleId>, name: Rc<Name>) -> Self {
+        todo!()
+    }
+
     /// Returns the underlying module identifier for this name.
     fn id(&self) -> &ModuleId {
         &self.id
@@ -72,16 +93,35 @@ impl ModuleName {
     }
 }
 
+#[inline]
+fn illegal_address<T>(address: usize) -> IonResult<T> {
+    illegal_operation(format!("Invalid address for macro: {}", address))
+}
+
+#[inline]
+fn valid_address(address: usize) -> IonResult<()> {
+    if address <= 0 {
+        illegal_address(address)
+    } else {
+        Ok(())
+    }
+}
+
 /// Full identifier for a Macro, which is its module, the optional name, and its address within
 /// the module.
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone)]
 pub struct MacroId {
-    module_id: ModuleId,
+    module_id: Rc<ModuleId>,
     name: Option<Name>,
     address: usize,
 }
 
 impl MacroId {
+    pub fn try_new(module_id: ModuleId, name: Option<Name>, address: usize) -> IonResult<Self> {
+        valid_address(address)?;
+        Ok(Self { module_id, name })
+    }
+
     /// Returns the module identifier where this macro is defined.
     pub fn module_id(&self) -> &ModuleId {
         &self.module_id
@@ -115,6 +155,21 @@ pub struct MacroName {
 }
 
 impl MacroName {
+    pub fn try_new(
+        id: MacroId,
+        module_name: ModuleName,
+        name: Option<Name>,
+        address: usize,
+    ) -> IonResult<Self> {
+        valid_address(address)?;
+        Ok(Self {
+            id: Rc::new(id),
+            module_name,
+            name,
+            address,
+        })
+    }
+
     /// Returns the identity of the macro underlying this name.
     pub fn id(&self) -> &MacroId {
         &self.id
@@ -179,4 +234,23 @@ pub enum MacroRef {
 pub struct ResolvedMacroRef {
     id: MacroId,
     reference: MacroRef,
+}
+
+impl ResolvedMacroRef {
+    #[inline]
+    pub fn new(id: MacroId, reference: MacroRef) -> Self {
+        Self { id, reference }
+    }
+
+    /// Returns the underlying macro identifier.
+    #[inline]
+    pub fn id(&self) -> &MacroId {
+        &self.id
+    }
+
+    /// Returns the underlying macro reference.
+    #[inline]
+    pub fn reference(&self) -> &MacroRef {
+        &self.reference
+    }
 }
