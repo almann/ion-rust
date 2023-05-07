@@ -161,17 +161,17 @@ pub struct MacroId {
 }
 
 impl MacroId {
-    /// Derives a macro name from this identifier.
+    /// Derives an macro name from this identifier.
     pub fn try_derive_macro_name(
         &self,
-        module_name: ModuleName,
+        module_id: ModuleId,
         name: Option<Name>,
         address: usize,
     ) -> IonResult<MacroName> {
         valid_address(address)?;
         Ok(MacroName {
+            module_id,
             id: self.clone(),
-            module_name,
             name,
             address,
         })
@@ -199,25 +199,25 @@ impl MacroId {
 /// A qualified name given to a macro.  This can be thought of as the name given to some
 /// macro within a module.
 ///
-/// Macro identifiers are unique, but more than one qualified name is allowed to map to
+/// Macro identifiers are unique, but more than one name is allowed to map to
 /// a given macro identifier through aliasing them in a module's macro table.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct MacroName {
+    module_id: ModuleId,
     id: MacroId,
-    module_name: ModuleName,
     name: Option<Name>,
     address: usize,
 }
 
 impl MacroName {
+    /// Returns the module identifier from whence this macro's name is defined.
+    pub fn module_id(&self) -> &ModuleId {
+        &self.module_id
+    }
+
     /// Returns the identity of the macro underlying this name.
     pub fn id(&self) -> &MacroId {
         &self.id
-    }
-
-    /// Returns the module name from whence this macro's name is defined.
-    pub fn module_name(&self) -> &ModuleName {
-        &self.module_name
     }
 
     /// Returns the potentially unspecified name for this macro's name definition.

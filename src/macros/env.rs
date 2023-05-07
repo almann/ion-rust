@@ -18,20 +18,61 @@
 //!
 //! [1]: https://en.wikipedia.org/wiki/Persistent_data_structure
 
-use crate::macros::ident::{ModuleId, Name};
+use crate::macros::ident::{MacroId, MacroName, ModuleId, Name};
+use crate::IonResult;
 use rpds::{HashTrieMap, Vector};
+use std::borrow::Borrow;
+use std::fmt::Debug;
 
-/// Represents the ordered table of macros.
-#[derive(Debug, Clone)]
-pub struct MacroTable<M> {
+/// Marker trait for things that can be macro values within environments/tables/modules.
+pub trait MacroVal: Debug {}
+
+/// A macro value that knows its name.
+#[derive(Debug)]
+pub struct MacroNameVal<M: MacroVal> {
+    name: MacroName,
+    value: M,
+}
+
+impl<M> MacroNameVal<M>
+where
+    M: MacroVal,
+{
+    pub fn new(name: MacroName, value: M) -> Self {
+        Self { name, value }
+    }
+
+    pub fn name(&self) -> &MacroName {
+        &self.name
+    }
+
+    pub fn value(&self) -> &M {
+        &self.value
+    }
+}
+
+/// A mapping of address to macro value.
+trait MacroByAddress<M: MacroVal> {
+    /// Retrieves a macro value by some offset.
+    fn macro_by_address(&self, address: usize) -> Option<&MacroNameVal<M>>;
+}
+
+/// A mapping of name to macro value.
+trait MacroByName<M: MacroVal> {
+    fn macro_by_name<N: Borrow<Name>>(&self, name: N) -> Option<&MacroNameVal<M>>;
+}
+
+/// Represents an ordered table of macros defining addresses from a zero-based offset.
+#[derive(Debug)]
+pub struct MacroTable<M: MacroVal> {
     // XXX currently this is just a persistent Vector, but we could have a variant to Vec
     //     when we "freeze" the module to have O(1) lookup at O(N) one time cost
     //     if we don't do this, access is always O(log N) because we're some kind of trie or
     //     the like under the hood.
-    table: Vector<M>,
+    table: Vector<MacroNameVal<M>>,
 }
 
-impl<M> MacroTable<M> {
+impl<M: MacroVal> MacroTable<M> {
     /// Constructs the empty macro table.
     pub fn empty() -> Self {
         Self {
@@ -39,33 +80,50 @@ impl<M> MacroTable<M> {
         }
     }
 
+    /// Creates a table the next macro added to it.
+    pub fn with_additional_macro(&self, next_macro: MacroNameVal<M>) -> Self {
+        Self {
+            table: self.table.push_back(next_macro),
+        }
+    }
+
     /// Returns the count of elements in the table.
     pub fn len(&self) -> usize {
         return self.table.len();
     }
+}
 
-    /// Creates a table the next macro added to it.
-    pub fn add_macro(&self, next: M) -> Self {
-        Self {
-            table: self.table.push_back(next),
-        }
+impl<M: MacroVal> MacroByAddress<M> for MacroTable<M> {
+    fn macro_by_address(&self, address: usize) -> Option<&MacroNameVal<M>> {
+        self.table.get(address)
     }
+}
 
-    /// Retrieves the macro definition at some offset in the table if within bounds.
-    pub fn get_macro(&self, index: usize) -> Option<&M> {
-        self.table.get(index)
-    }
+/// Represents a lookup environment table/index for macros.
+#[derive(Debug)]
+pub struct MacroEnv<M>
+where
+    M: MacroVal,
+{
+    table: MacroTable<M>,
+    index: HashTrieMap<Name, usize>,
 }
 
 /// Represents a module of macros.
-#[derive(Debug, Clone)]
-pub struct Module<M> {
+#[derive(Debug)]
+pub struct Module<M>
+where
+    M: MacroVal,
+{
     id: ModuleId,
     table: MacroTable<M>,
-    index: HashTrieMap<Name, M>,
+    index: HashTrieMap<Name, usize>,
 }
 
-impl<M> Module<M> {
+impl<M> Module<M>
+where
+    M: MacroVal,
+{
     /// Constructs an empty module for some [`ModuleId`].
     pub fn empty(id: ModuleId) -> Self {
         Self {
@@ -75,8 +133,64 @@ impl<M> Module<M> {
         }
     }
 
+    /// Defines a macro within this module with an optional name returning the new module containing
+    /// it.
+    ///
+    /// Note that such a macro will have a [`MacroId`] that is bound to the identity of
+    /// this module.
+    pub fn with_defined_macro(
+        &self,
+        opt_name: Option<Name>,
+        next_macro_val: M,
+    ) -> IonResult<Module<M>> {
+        let next_address = self.table.len();
+        let macro_id = self
+            .id
+            .try_derive_macro_id(opt_name.clone(), next_address)?;
+        // we alias to ourselves for defined macros
+        self.with_aliased_macro(opt_name, macro_id, next_macro_val)
+    }
+
+    /// Aliases a macro within this module with an optional name to the given macro identifier.
+    pub fn with_aliased_macro(
+        &self,
+        opt_name: Option<Name>,
+        source_macro_id: MacroId,
+        next_macro_val: M,
+    ) -> IonResult<Module<M>> {
+        let next_address = self.table.len();
+        let macro_name = source_macro_id.try_derive_macro_name(
+            self.id.clone(),
+            opt_name.clone(),
+            next_address,
+        )?;
+        let next_index = match opt_name {
+            None => self.index.clone(),
+            Some(name) => self.index.insert(name, next_address),
+        };
+        let next_macro = MacroNameVal::new(macro_name, next_macro_val);
+        let next_table = self.table.with_additional_macro(next_macro);
+        Ok(Self {
+            id: self.id.clone(),
+            table: next_table,
+            index: next_index,
+        })
+    }
+
     /// Returns the underlying module identifier.
     pub fn id(&self) -> &ModuleId {
         &self.id
+    }
+}
+
+impl<M: MacroVal> MacroByAddress<M> for Module<M> {
+    fn macro_by_address(&self, _address: usize) -> Option<&MacroNameVal<M>> {
+        todo!()
+    }
+}
+
+impl<M: MacroVal> MacroByName<M> for Module<M> {
+    fn macro_by_name<N: Borrow<Name>>(&self, _name: N) -> Option<&MacroNameVal<M>> {
+        todo!()
     }
 }
