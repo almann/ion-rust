@@ -27,6 +27,11 @@ use std::fmt::Debug;
 /// Marker trait for things that can be macro values within environments/tables/modules.
 pub trait MacroVal: Debug {}
 
+// TODO name is a relative concept here that we may have to change
+//      a `MacroName` is a optional name/required address in a module, but aliases
+//      are environmental constructs that have a required name/no address.
+//      Maybe, we have a `Handle` with Macro or `MacroName`.
+
 /// A macro value that knows its name.
 #[derive(Debug)]
 pub struct MacroNameVal<M: MacroVal> {
