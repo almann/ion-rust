@@ -1,6 +1,9 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 
 //! Names and identifiers for macros.
+//!
+//! These types are all immutable are persistent in that they try to share underlying structure.
+//! Therefore, `clone()`-ing these types are generally inexpensive.
 
 use crate::macros::ParseStr;
 use crate::result::illegal_operation;
@@ -9,19 +12,20 @@ use std::borrow::Borrow;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 
-// TODO we expose shared pointers here--we might want to consider something like 'archery'
-//      to abstract over this
+// TODO we use shared pointers here--we might want to consider something like 'archery'
+//      to abstract over this (e.g., `Arc` for sharing/`Rc` for single threaded use)
 
 /// An identifier that represents a name of a parameter, module, or macro.
 ///
-/// This is basically just a string with some constraints as to what can be contained within
-/// it; i.e., Ion identifier syntax for symbols.
+/// This is basically just an interned string with some constraints as to what can be
+/// contained within it; i.e., Ion identifier syntax for symbols.
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone)]
 pub struct Name {
-    text: String,
+    text: Rc<String>,
 }
 
 impl Name {
+    /// The underlying text of the string
     pub fn text(&self) -> &str {
         self.text.as_str()
     }
@@ -55,41 +59,27 @@ impl Display for Name {
     }
 }
 
-/// Represents the unique module identifier in a given encoding context.
+/// The identifier for a global resource (e.g., a catalog).
 ///
-/// Notable, a shared module's identifier may map to many local names, whereas an *inline module*
-/// (i.e., one defined in an encoding directive), has exactly one name.
+/// External identifiers have an interned string name and a version `>= 1`.
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone)]
-pub enum ModuleId {
-    /// A module defined inline in an encoding context.
-    Inline(Rc<Name>),
-    /// A module defined in some catalog entry which has a name and a version.
-    Catalog(String, usize),
+pub struct ExternalId {
+    name: Rc<String>,
+    version: usize,
 }
 
-/// Represents a name associated with a module.
-///
-/// When loading modules from a catalog, this name is not unique, but the underlying
-/// [`ModuleId`] is.
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone)]
-pub struct ModuleName {
-    id: Rc<ModuleId>,
-    name: Rc<Name>,
-}
-
-impl ModuleName {
-    pub fn new(id: Rc<ModuleId>, name: Rc<Name>) -> Self {
-        todo!()
-    }
-
-    /// Returns the underlying module identifier for this name.
-    fn id(&self) -> &ModuleId {
-        &self.id
-    }
-
-    /// Returns the name bound to this module.
-    fn name(&self) -> &str {
-        self.name.text()
+impl ExternalId {
+    /// Creates an external identifier from a name and version.  The version must be `>= 1`
+    /// or this returns `Err`.
+    pub fn try_new<S: Into<String>>(name: S, version: usize) -> IonResult<Self> {
+        if version <= 0 {
+            illegal_operation(format!("External version must be >= 1: {}", version))
+        } else {
+            Ok(Self {
+                name: Rc::new(name.into()),
+                version,
+            })
+        }
     }
 }
 
@@ -107,19 +97,84 @@ fn valid_address(address: usize) -> IonResult<()> {
     }
 }
 
+/// Represents the unique module identifier in a given encoding context.
+///
+/// Notable, a shared module's identifier may map to many local names, whereas an *inline module*
+/// (i.e., one defined in an encoding directive), has exactly one name.
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone)]
+pub enum ModuleId {
+    /// A module defined inline in an encoding context.
+    Inline(Name),
+    /// A module defined externally.
+    External(ExternalId),
+}
+
+impl ModuleId {
+    /// Derives a [`ModuleName`] from this module identifier.
+    pub fn derive_name(&self, name: Name) -> ModuleName {
+        ModuleName {
+            id: self.clone(),
+            name,
+        }
+    }
+
+    /// Derives a [`MacroId`] from this module identifier.
+    pub fn try_derive_macro_id(&self, name: Option<Name>, address: usize) -> IonResult<MacroId> {
+        valid_address(address)?;
+        Ok(MacroId {
+            module_id: self.clone(),
+            name,
+            address,
+        })
+    }
+}
+
+/// Represents a name associated with a module.
+///
+/// When loading modules from a catalog, this name is not unique, but the underlying
+/// [`ModuleId`] is.
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone)]
+pub struct ModuleName {
+    id: ModuleId,
+    name: Name,
+}
+
+impl ModuleName {
+    /// Returns the underlying module identifier for this name.
+    fn id(&self) -> &ModuleId {
+        &self.id
+    }
+
+    /// Returns the name bound to this module.
+    fn name(&self) -> &str {
+        self.name.text()
+    }
+}
+
 /// Full identifier for a Macro, which is its module, the optional name, and its address within
 /// the module.
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone)]
 pub struct MacroId {
-    module_id: Rc<ModuleId>,
+    module_id: ModuleId,
     name: Option<Name>,
     address: usize,
 }
 
 impl MacroId {
-    pub fn try_new(module_id: ModuleId, name: Option<Name>, address: usize) -> IonResult<Self> {
+    /// Derives a macro name from this identifier.
+    pub fn try_derive_macro_name(
+        &self,
+        module_name: ModuleName,
+        name: Option<Name>,
+        address: usize,
+    ) -> IonResult<MacroName> {
         valid_address(address)?;
-        Ok(Self { module_id, name })
+        Ok(MacroName {
+            id: self.clone(),
+            module_name,
+            name,
+            address,
+        })
     }
 
     /// Returns the module identifier where this macro is defined.
@@ -148,28 +203,13 @@ impl MacroId {
 /// a given macro identifier through aliasing them in a module's macro table.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct MacroName {
-    id: Rc<MacroId>,
+    id: MacroId,
     module_name: ModuleName,
     name: Option<Name>,
     address: usize,
 }
 
 impl MacroName {
-    pub fn try_new(
-        id: MacroId,
-        module_name: ModuleName,
-        name: Option<Name>,
-        address: usize,
-    ) -> IonResult<Self> {
-        valid_address(address)?;
-        Ok(Self {
-            id: Rc::new(id),
-            module_name,
-            name,
-            address,
-        })
-    }
-
     /// Returns the identity of the macro underlying this name.
     pub fn id(&self) -> &MacroId {
         &self.id
