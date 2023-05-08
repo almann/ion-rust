@@ -19,7 +19,9 @@
 //! [1]: https://en.wikipedia.org/wiki/Persistent_data_structure
 
 use crate::macros::ident::{MacroId, MacroName, ModuleId, Name};
+use crate::result::illegal_operation;
 use crate::IonResult;
+use delegate::delegate;
 use rpds::{HashTrieMap, Vector};
 use std::borrow::Borrow;
 use std::fmt::Debug;
@@ -104,37 +106,96 @@ impl<M: MacroVal> MacroByAddress<M> for MacroTable<M> {
     }
 }
 
-/// Represents a lookup environment table/index for macros.
+/// Name to address entry.
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+enum IndexEntry {
+    /// Indicates that a name maps to more than one distinct address.
+    Ambiguous,
+    /// Indicates a unique address in the index corresponding to the name.
+    Address(usize),
+}
+
+/// Internal address/name mapping.
 #[derive(Debug)]
-pub struct MacroEnv<M>
-where
-    M: MacroVal,
-{
+struct MacroIndex<M: MacroVal> {
     table: MacroTable<M>,
-    index: HashTrieMap<Name, usize>,
+    index: HashTrieMap<Name, IndexEntry>,
+}
+
+impl<M: MacroVal> MacroIndex<M> {
+    /// Constructs an empty index.
+    fn empty() -> Self {
+        Self {
+            table: MacroTable::empty(),
+            index: HashTrieMap::new(),
+        }
+    }
+
+    /// The number of entries in the underlying table.
+    fn len(&self) -> usize {
+        self.table.len()
+    }
+
+    /// Inserts the macro into the table and the index, returning the entry in the index and
+    /// the version of the index containing the added macro.
+    ///
+    /// The name ***must*** have the address of the end of the table specified.
+    fn with_macro(&self, macro_name: MacroName, next_macro_val: M) -> (IndexEntry, Self) {
+        assert_eq!(self.len(), macro_name.address());
+        let mut index_entry = IndexEntry::Address(macro_name.address());
+        let next_index = match macro_name.name() {
+            None => self.index.clone(),
+            Some(name) => match self.index.get(name) {
+                Some(IndexEntry::Ambiguous) => {
+                    index_entry = IndexEntry::Ambiguous;
+                    self.index.clone()
+                }
+                Some(IndexEntry::Address(_)) => {
+                    index_entry = IndexEntry::Ambiguous;
+                    self.index.insert(name.clone(), IndexEntry::Ambiguous)
+                }
+                None => self
+                    .index
+                    .insert(name.clone(), IndexEntry::Address(macro_name.address())),
+            },
+        };
+        let next_macro = MacroNameVal::new(macro_name, next_macro_val);
+        let next_table = self.table.with_additional_macro(next_macro);
+        (
+            index_entry,
+            Self {
+                table: next_table,
+                index: next_index,
+            },
+        )
+    }
+}
+
+impl<M: MacroVal> MacroByAddress<M> for MacroIndex<M> {
+    fn macro_by_address(&self, _address: usize) -> Option<&MacroNameVal<M>> {
+        todo!()
+    }
+}
+
+impl<M: MacroVal> MacroByName<M> for MacroIndex<M> {
+    fn macro_by_name<N: Borrow<Name>>(&self, _name: N) -> Option<&MacroNameVal<M>> {
+        todo!()
+    }
 }
 
 /// Represents a module of macros.
 #[derive(Debug)]
-pub struct Module<M>
-where
-    M: MacroVal,
-{
+pub struct Module<M: MacroVal> {
     id: ModuleId,
-    table: MacroTable<M>,
-    index: HashTrieMap<Name, usize>,
+    index: MacroIndex<M>,
 }
 
-impl<M> Module<M>
-where
-    M: MacroVal,
-{
+impl<M: MacroVal> Module<M> {
     /// Constructs an empty module for some [`ModuleId`].
     pub fn empty(id: ModuleId) -> Self {
         Self {
             id,
-            table: MacroTable::empty(),
-            index: HashTrieMap::new(),
+            index: MacroIndex::empty(),
         }
     }
 
@@ -148,7 +209,7 @@ where
         opt_name: Option<Name>,
         next_macro_val: M,
     ) -> IonResult<Module<M>> {
-        let next_address = self.table.len();
+        let next_address = self.index.len();
         let macro_id = self
             .id
             .try_derive_macro_id(opt_name.clone(), next_address)?;
@@ -163,21 +224,21 @@ where
         source_macro_id: MacroId,
         next_macro_val: M,
     ) -> IonResult<Module<M>> {
-        let next_address = self.table.len();
+        let next_address = self.index.len();
         let macro_name = source_macro_id.try_derive_macro_name(
             self.id.clone(),
             opt_name.clone(),
             next_address,
         )?;
-        let next_index = match opt_name {
-            None => self.index.clone(),
-            Some(name) => self.index.insert(name, next_address),
-        };
-        let next_macro = MacroNameVal::new(macro_name, next_macro_val);
-        let next_table = self.table.with_additional_macro(next_macro);
+        let (next_index_entry, next_index) = self.index.with_macro(macro_name, next_macro_val);
+        if matches!(next_index_entry, IndexEntry::Ambiguous) {
+            return illegal_operation(format!(
+                "Duplicate macro named {} in module",
+                opt_name.unwrap()
+            ));
+        }
         Ok(Self {
             id: self.id.clone(),
-            table: next_table,
             index: next_index,
         })
     }
@@ -189,13 +250,23 @@ where
 }
 
 impl<M: MacroVal> MacroByAddress<M> for Module<M> {
-    fn macro_by_address(&self, _address: usize) -> Option<&MacroNameVal<M>> {
-        todo!()
+    delegate! {
+        to self.index {
+            fn macro_by_address(&self, _address: usize) -> Option<&MacroNameVal<M>>;
+        }
     }
 }
 
 impl<M: MacroVal> MacroByName<M> for Module<M> {
-    fn macro_by_name<N: Borrow<Name>>(&self, _name: N) -> Option<&MacroNameVal<M>> {
-        todo!()
+    delegate! {
+        to self.index {
+            fn macro_by_name<N: Borrow<Name>>(&self, _name: N) -> Option<&MacroNameVal<M>>;
+        }
     }
+}
+
+/// Represents a lookup environment table/index for macros.
+#[derive(Debug)]
+pub struct MacroEnv<M: MacroVal> {
+    index: MacroIndex<M>,
 }

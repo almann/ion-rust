@@ -8,7 +8,6 @@
 use crate::macros::ParseStr;
 use crate::result::illegal_operation;
 use crate::IonResult;
-use std::borrow::Borrow;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 
@@ -25,7 +24,7 @@ pub struct Name {
 }
 
 impl Name {
-    /// The underlying text of the string
+    /// The underlying text of the name.
     pub fn text(&self) -> &str {
         self.text.as_str()
     }
@@ -38,12 +37,6 @@ impl ParseStr for Name {
     {
         // TODO implement Ion identifier parsing here...
         todo!()
-    }
-}
-
-impl Borrow<str> for Name {
-    fn borrow(&self) -> &str {
-        self.text()
     }
 }
 
@@ -183,11 +176,8 @@ impl MacroId {
     }
 
     /// The name of the macro if defined.
-    pub fn name(&self) -> Option<&str> {
-        match &self.name {
-            None => None,
-            Some(name) => Some(name.text()),
-        }
+    pub fn name(&self) -> Option<&Name> {
+        self.name.as_ref()
     }
 
     /// The address for this macro in the module it is defined in.
@@ -221,11 +211,8 @@ impl MacroName {
     }
 
     /// Returns the potentially unspecified name for this macro's name definition.
-    pub fn name(&self) -> Option<&str> {
-        match &self.name {
-            None => None,
-            Some(name) => Some(name.text()),
-        }
+    pub fn name(&self) -> Option<&Name> {
+        self.name.as_ref()
     }
 
     /// Returns the address of this name in the module it was defined in
