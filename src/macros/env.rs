@@ -18,13 +18,14 @@
 //!
 //! [1]: https://en.wikipedia.org/wiki/Persistent_data_structure
 
-use crate::macros::ident::{MacroId, MacroName, ModuleId, Name};
+use crate::macros::ident::{Addressable, MacroBind, MacroId, ModuleId, Name};
 use crate::result::illegal_operation;
 use crate::IonResult;
 use delegate::delegate;
 use rpds::{HashTrieMap, Vector};
 use std::borrow::Borrow;
 use std::fmt::Debug;
+use std::rc::Rc;
 
 /// Marker trait for things that can be macro values within environments/tables/modules.
 pub trait MacroVal: Debug {}
@@ -34,39 +35,68 @@ pub trait MacroVal: Debug {}
 //      are environmental constructs that have a required name/no address.
 //      Maybe, we have a `Handle` with Macro or `MacroName`.
 
-/// A macro value that knows its name.
-#[derive(Debug)]
-pub struct MacroNameVal<M: MacroVal> {
-    name: MacroName,
-    value: M,
+/// Represents some resolved handle to a macro definition.
+///
+/// This handle is either a bind into some context (a macro table/module), or an alias to
+/// something that itself isn't bound (e.g., a macro alias).
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum MacroHandle {
+    /// A direct binding for some addressable macro
+    /// (which itself may be aliased to some definition).
+    Bind(MacroBind),
+
+    /// An alias to some addressable macro binding
+    /// (which itself may be aliased to some definition).
+    Alias(MacroBind, Name),
 }
 
-impl<M> MacroNameVal<M>
-where
-    M: MacroVal,
-{
-    pub fn new(name: MacroName, value: M) -> Self {
-        Self { name, value }
+/// A macro value associated to some handle.
+///
+/// This is a reference counted data structure and can be cloned relatively cheaply.
+#[derive(Debug)]
+pub struct MacroHandleVal<M: MacroVal> {
+    handle: Rc<MacroHandle>,
+    value: Rc<M>,
+}
+
+impl<M: MacroVal> MacroHandleVal<M> {
+    /// Constructs a new handle.
+    fn new(handle: MacroHandle, value: M) -> Self {
+        Self {
+            handle: Rc::new(handle),
+            value: Rc::new(value),
+        }
     }
 
-    pub fn name(&self) -> &MacroName {
-        &self.name
+    /// Reference to the underlying handle for this macro value.
+    pub fn handle(&self) -> &MacroHandle {
+        &self.handle
     }
 
+    /// Reference to the underlying value.
     pub fn value(&self) -> &M {
         &self.value
+    }
+}
+
+impl<M: MacroVal> Clone for MacroHandleVal<M> {
+    fn clone(&self) -> Self {
+        MacroHandleVal {
+            handle: Rc::clone(&self.handle),
+            value: Rc::clone(&self.value),
+        }
     }
 }
 
 /// A mapping of address to macro value.
 trait MacroByAddress<M: MacroVal> {
     /// Retrieves a macro value by some offset.
-    fn macro_by_address(&self, address: usize) -> Option<&MacroNameVal<M>>;
+    fn macro_by_address(&self, address: usize) -> Option<&MacroHandleVal<M>>;
 }
 
 /// A mapping of name to macro value.
 trait MacroByName<M: MacroVal> {
-    fn macro_by_name<N: Borrow<Name>>(&self, name: N) -> Option<&MacroNameVal<M>>;
+    fn macro_by_name<N: Borrow<Name>>(&self, name: N) -> Option<&MacroHandleVal<M>>;
 }
 
 /// Represents an ordered table of macros defining addresses from a zero-based offset.
@@ -76,7 +106,7 @@ pub struct MacroTable<M: MacroVal> {
     //     when we "freeze" the module to have O(1) lookup at O(N) one time cost
     //     if we don't do this, access is always O(log N) because we're some kind of trie or
     //     the like under the hood.
-    table: Vector<MacroNameVal<M>>,
+    table: Vector<MacroHandleVal<M>>,
 }
 
 impl<M: MacroVal> MacroTable<M> {
@@ -88,7 +118,7 @@ impl<M: MacroVal> MacroTable<M> {
     }
 
     /// Creates a table the next macro added to it.
-    pub fn with_additional_macro(&self, next_macro: MacroNameVal<M>) -> Self {
+    pub fn with_additional_macro(&self, next_macro: MacroHandleVal<M>) -> Self {
         Self {
             table: self.table.push_back(next_macro),
         }
@@ -101,25 +131,49 @@ impl<M: MacroVal> MacroTable<M> {
 }
 
 impl<M: MacroVal> MacroByAddress<M> for MacroTable<M> {
-    fn macro_by_address(&self, address: usize) -> Option<&MacroNameVal<M>> {
+    fn macro_by_address(&self, address: usize) -> Option<&MacroHandleVal<M>> {
         self.table.get(address)
     }
 }
 
-/// Name to address entry.
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-enum IndexEntry {
-    /// Indicates that a name maps to more than one distinct address.
-    Ambiguous,
+impl<M: MacroVal> Clone for MacroTable<M> {
+    fn clone(&self) -> Self {
+        MacroTable {
+            table: self.table.clone(),
+        }
+    }
+}
+
+/// The entry of the name index--this tracks non-unique names, the distinct case, and
+/// a sentinel indicating lack of an entry.
+#[derive(Debug)]
+enum IndexEntry<M: MacroVal> {
+    // TODO consider if we really want to track all the conflicts--it is nice for debugging...
+    /// Indicates that a name maps to more than one distinct handle.
+    Ambiguous(Vector<MacroHandleVal<M>>),
+
     /// Indicates a unique address in the index corresponding to the name.
-    Address(usize),
+    Distinct(MacroHandleVal<M>),
+
+    /// Indicates that there is nothing in the index corresponding to the name.
+    Nothing,
+}
+
+impl<M: MacroVal> Clone for IndexEntry<M> {
+    fn clone(&self) -> Self {
+        match self {
+            IndexEntry::Ambiguous(vals) => IndexEntry::Ambiguous(vals.clone()),
+            IndexEntry::Distinct(val) => IndexEntry::Distinct(val.clone()),
+            IndexEntry::Nothing => IndexEntry::Nothing,
+        }
+    }
 }
 
 /// Internal address/name mapping.
 #[derive(Debug)]
 struct MacroIndex<M: MacroVal> {
     table: MacroTable<M>,
-    index: HashTrieMap<Name, IndexEntry>,
+    index: HashTrieMap<Name, IndexEntry<M>>,
 }
 
 impl<M: MacroVal> MacroIndex<M> {
@@ -139,28 +193,59 @@ impl<M: MacroVal> MacroIndex<M> {
     /// Inserts the macro into the table and the index, returning the entry in the index and
     /// the version of the index containing the added macro.
     ///
-    /// The name ***must*** have the address of the end of the table specified.
-    fn with_macro(&self, macro_name: MacroName, next_macro_val: M) -> (IndexEntry, Self) {
-        assert_eq!(self.len(), macro_name.address());
-        let mut index_entry = IndexEntry::Address(macro_name.address());
-        let next_index = match macro_name.name() {
+    /// A [`MacroHandle::Bind`] will associate with the underlying table ***and*** the name map
+    /// if a name is present in the underlying [`MacroBind::name`] exists. In this case,
+    /// the handle ***must*** have the address of the end of the table specified or this will
+    /// panic.
+    ///
+    /// A [`MacroHandle::Alias`] will ***only*** associate with the underlying name index.
+    fn with_macro(&self, next_handle: MacroHandle, next_macro_val: M) -> (IndexEntry<M>, Self) {
+        let next_macro = MacroHandleVal::new(next_handle, next_macro_val);
+
+        // insert if appropriate into the macro table
+        let next_table = match &next_macro.handle() {
+            MacroHandle::Bind(bind) => {
+                // make sure we have a valid address if applicable
+                assert_eq!(self.len(), bind.address());
+                self.table.with_additional_macro(next_macro.clone())
+            }
+            MacroHandle::Alias(_, _) => {
+                // an alias never gets added to the table
+                self.table.clone()
+            }
+        };
+
+        let potential_name = match next_macro.handle() {
+            MacroHandle::Bind(bind) => bind.name(),
+            MacroHandle::Alias(_, name) => Some(name),
+        };
+        // insert into name index
+        let mut index_entry = IndexEntry::Nothing;
+        let next_index = match potential_name {
+            // no name to map--same name index.
             None => self.index.clone(),
             Some(name) => match self.index.get(name) {
-                Some(IndexEntry::Ambiguous) => {
-                    index_entry = IndexEntry::Ambiguous;
-                    self.index.clone()
+                None => {
+                    // nothing already is in the index for this name
+                    index_entry = IndexEntry::Distinct(next_macro.clone());
+                    self.index.insert(name.clone(), index_entry.clone())
                 }
-                Some(IndexEntry::Address(_)) => {
-                    index_entry = IndexEntry::Ambiguous;
-                    self.index.insert(name.clone(), IndexEntry::Ambiguous)
-                }
-                None => self
-                    .index
-                    .insert(name.clone(), IndexEntry::Address(macro_name.address())),
+                Some(existing) => match existing {
+                    IndexEntry::Ambiguous(others) => {
+                        index_entry = IndexEntry::Ambiguous(others.push_back(next_macro.clone()));
+                        self.index.insert(name.clone(), index_entry.clone())
+                    }
+                    IndexEntry::Distinct(previous) => {
+                        index_entry = IndexEntry::Ambiguous(
+                            [previous.clone(), next_macro.clone()].into_iter().collect(),
+                        );
+                        self.index.insert(name.clone(), index_entry.clone())
+                    }
+                    IndexEntry::Nothing => unreachable!("Nothing is not allowed as value in index"),
+                },
             },
         };
-        let next_macro = MacroNameVal::new(macro_name, next_macro_val);
-        let next_table = self.table.with_additional_macro(next_macro);
+
         (
             index_entry,
             Self {
@@ -172,13 +257,13 @@ impl<M: MacroVal> MacroIndex<M> {
 }
 
 impl<M: MacroVal> MacroByAddress<M> for MacroIndex<M> {
-    fn macro_by_address(&self, _address: usize) -> Option<&MacroNameVal<M>> {
+    fn macro_by_address(&self, _address: usize) -> Option<&MacroHandleVal<M>> {
         todo!()
     }
 }
 
 impl<M: MacroVal> MacroByName<M> for MacroIndex<M> {
-    fn macro_by_name<N: Borrow<Name>>(&self, _name: N) -> Option<&MacroNameVal<M>> {
+    fn macro_by_name<N: Borrow<Name>>(&self, _name: N) -> Option<&MacroHandleVal<M>> {
         todo!()
     }
 }
@@ -199,6 +284,20 @@ impl<M: MacroVal> Module<M> {
         }
     }
 
+    fn with_handle(&self, next_handle: MacroHandle, next_macro_val: M) -> IonResult<Module<M>> {
+        let (next_index_entry, next_index) = self.index.with_macro(next_handle, next_macro_val);
+        if matches!(&next_index_entry, IndexEntry::Ambiguous(_)) {
+            return illegal_operation(format!(
+                "Duplicate macro named in module: {:?}",
+                next_index_entry
+            ));
+        }
+        Ok(Self {
+            id: self.id.clone(),
+            index: next_index,
+        })
+    }
+
     /// Defines a macro within this module with an optional name returning the new module containing
     /// it.
     ///
@@ -214,7 +313,8 @@ impl<M: MacroVal> Module<M> {
             .id
             .try_derive_macro_id(opt_name.clone(), next_address)?;
         // we alias to ourselves for defined macros
-        self.with_aliased_macro(opt_name, macro_id, next_macro_val)
+        let next_macro_handle = MacroHandle::Bind(MacroBind::Definition(macro_id));
+        self.with_handle(next_macro_handle, next_macro_val)
     }
 
     /// Aliases a macro within this module with an optional name to the given macro identifier.
@@ -225,22 +325,10 @@ impl<M: MacroVal> Module<M> {
         next_macro_val: M,
     ) -> IonResult<Module<M>> {
         let next_address = self.index.len();
-        let macro_name = source_macro_id.try_derive_macro_name(
-            self.id.clone(),
-            opt_name.clone(),
-            next_address,
-        )?;
-        let (next_index_entry, next_index) = self.index.with_macro(macro_name, next_macro_val);
-        if matches!(next_index_entry, IndexEntry::Ambiguous) {
-            return illegal_operation(format!(
-                "Duplicate macro named {} in module",
-                opt_name.unwrap()
-            ));
-        }
-        Ok(Self {
-            id: self.id.clone(),
-            index: next_index,
-        })
+        let next_macro_bind =
+            source_macro_id.try_derive_macro_bind_alias(opt_name.clone(), next_address)?;
+        let next_macro_handle = MacroHandle::Bind(next_macro_bind);
+        self.with_handle(next_macro_handle, next_macro_val)
     }
 
     /// Returns the underlying module identifier.
@@ -252,7 +340,7 @@ impl<M: MacroVal> Module<M> {
 impl<M: MacroVal> MacroByAddress<M> for Module<M> {
     delegate! {
         to self.index {
-            fn macro_by_address(&self, _address: usize) -> Option<&MacroNameVal<M>>;
+            fn macro_by_address(&self, _address: usize) -> Option<&MacroHandleVal<M>>;
         }
     }
 }
@@ -260,7 +348,7 @@ impl<M: MacroVal> MacroByAddress<M> for Module<M> {
 impl<M: MacroVal> MacroByName<M> for Module<M> {
     delegate! {
         to self.index {
-            fn macro_by_name<N: Borrow<Name>>(&self, _name: N) -> Option<&MacroNameVal<M>>;
+            fn macro_by_name<N: Borrow<Name>>(&self, _name: N) -> Option<&MacroHandleVal<M>>;
         }
     }
 }
