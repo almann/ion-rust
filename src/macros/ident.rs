@@ -52,6 +52,18 @@ impl Display for Name {
     }
 }
 
+/// An address in a table.
+pub type Address = usize;
+
+/// An entity that has an optional name and a non-optional address.
+pub trait Addressable {
+    /// Returns the underlying name if available.
+    fn name(&self) -> Option<&Name>;
+
+    /// Returns the address of this entity.
+    fn address(&self) -> Address;
+}
+
 /// The identifier for a global resource (e.g., a catalog).
 ///
 /// External identifiers have an interned string name and a version `>= 1`.
@@ -77,12 +89,12 @@ impl ExternalId {
 }
 
 #[inline]
-fn illegal_address<T>(address: usize) -> IonResult<T> {
+fn illegal_address<T>(address: Address) -> IonResult<T> {
     illegal_operation(format!("Invalid address for macro: {}", address))
 }
 
 #[inline]
-fn valid_address(address: usize) -> IonResult<()> {
+fn valid_address(address: Address) -> IonResult<()> {
     if address <= 0 {
         illegal_address(address)
     } else {
@@ -112,12 +124,10 @@ impl ModuleId {
     }
 
     /// Derives a [`MacroId`] from this module identifier.
-    pub fn try_derive_macro_id(&self, name: Option<Name>, address: usize) -> IonResult<MacroId> {
-        valid_address(address)?;
+    pub fn try_derive_macro_id(&self, name: Option<Name>, address: Address) -> IonResult<MacroId> {
         Ok(MacroId {
             module_id: self.clone(),
-            name,
-            address,
+            name: MacroName::try_new(name, address)?,
         })
     }
 }
@@ -149,75 +159,100 @@ impl ModuleName {
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone)]
 pub struct MacroId {
     module_id: ModuleId,
-    name: Option<Name>,
-    address: usize,
+    name: MacroName,
 }
 
 impl MacroId {
-    /// Derives an macro name from this identifier.
-    pub fn try_derive_macro_name(
+    /// Derives a [`MacroBind::Alias`] from this identifier with the given name/address.
+    pub fn try_derive_macro_bind_alias(
         &self,
-        module_id: ModuleId,
         name: Option<Name>,
-        address: usize,
-    ) -> IonResult<MacroName> {
-        valid_address(address)?;
-        Ok(MacroName {
-            module_id,
-            id: self.clone(),
-            name,
-            address,
-        })
+        address: Address,
+    ) -> IonResult<MacroBind> {
+        let macro_name = MacroName::try_new(name, address)?;
+        Ok(MacroBind::Alias(self.clone(), macro_name))
     }
 
     /// Returns the module identifier where this macro is defined.
     pub fn module_id(&self) -> &ModuleId {
         &self.module_id
     }
+}
 
-    /// The name of the macro if defined.
-    pub fn name(&self) -> Option<&Name> {
+impl Addressable for MacroId {
+    fn name(&self) -> Option<&Name> {
+        self.name.name()
+    }
+
+    fn address(&self) -> Address {
+        self.name.address()
+    }
+}
+
+/// Represents a name/address of a macro for that is not bound to anything.
+///
+/// This is a name/address that hasn't been assigned to anything.
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone)]
+pub struct MacroName {
+    name: Option<Name>,
+    address: Address,
+}
+
+impl MacroName {
+    /// Constructs a new name.
+    pub(crate) fn try_new(name: Option<Name>, address: Address) -> IonResult<Self> {
+        valid_address(address)?;
+        Ok(Self { name, address })
+    }
+}
+
+impl Addressable for MacroName {
+    fn name(&self) -> Option<&Name> {
         self.name.as_ref()
     }
 
-    /// The address for this macro in the module it is defined in.
-    pub fn address(&self) -> usize {
+    fn address(&self) -> Address {
         self.address
     }
 }
 
-/// A qualified name given to a macro.  This can be thought of as the name given to some
-/// macro within a module.
+/// A name assigned to a macro.  This can be thought of as the name given to some
+/// macro within a module, though this does not imply what module such a bind is assigned to.
 ///
 /// Macro identifiers are unique, but more than one name is allowed to map to
 /// a given macro identifier through aliasing them in a module's macro table.
 #[derive(Debug, Eq, PartialEq, Clone)]
-pub struct MacroName {
-    module_id: ModuleId,
-    id: MacroId,
-    name: Option<Name>,
-    address: usize,
+pub enum MacroBind {
+    /// A macro that has been defined where it is bound.
+    Definition(MacroId),
+
+    /// A macro name that is bound some other macro definition.
+    Alias(MacroId, MacroName),
 }
 
-impl MacroName {
-    /// Returns the module identifier from whence this macro's name is defined.
-    pub fn module_id(&self) -> &ModuleId {
-        &self.module_id
-    }
-
-    /// Returns the identity of the macro underlying this name.
+impl MacroBind {
+    /// Returns the identity of the macro underlying this bound name.
     pub fn id(&self) -> &MacroId {
-        &self.id
+        match self {
+            MacroBind::Definition(id) => id,
+            MacroBind::Alias(id, _) => id,
+        }
+    }
+}
+
+impl Addressable for MacroBind {
+    fn name(&self) -> Option<&Name> {
+        match self {
+            MacroBind::Definition(id) => id.name(),
+            MacroBind::Alias(_, macro_name) => macro_name.name(),
+        }
     }
 
-    /// Returns the potentially unspecified name for this macro's name definition.
-    pub fn name(&self) -> Option<&Name> {
-        self.name.as_ref()
-    }
-
-    /// Returns the address of this name in the module it was defined in
-    pub fn address(&self) -> usize {
-        self.address
+    fn address(&self) -> Address {
+        match self {
+            MacroBind::Definition(id) => id.address(),
+            MacroBind::Alias(_, name) => name.address(),
+        }
     }
 }
 
@@ -229,7 +264,7 @@ impl MacroName {
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum UnqualifiedMacroRef {
     Name(Name),
-    Address(usize),
+    Address(Address),
 }
 
 /// Reference to a macro, which may be [*unqualified*][u], [*partially qualified*][p],
@@ -243,8 +278,8 @@ pub enum UnqualifiedMacroRef {
 /// [f]: Self::Full
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum MacroRef {
-    /// An *unqualified* macro reference for which no module is implied.
-    Unqualified(UnqualifiedMacroRef),
+    /// An *unqualified* name referring to some macro for which no module is implied.
+    Unqualified(Name),
 
     /// A *partially* qualified reference, generally valid for an environment where
     /// the reference is referring to the *current* module being defined where a
