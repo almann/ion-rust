@@ -21,19 +21,12 @@
 use crate::macros::ident::{Addressable, MacroBind, MacroId, ModuleId, Name};
 use crate::result::illegal_operation;
 use crate::IonResult;
-use delegate::delegate;
 use rpds::{HashTrieMap, Vector};
-use std::borrow::Borrow;
 use std::fmt::Debug;
 use std::rc::Rc;
 
 /// Marker trait for things that can be macro values within environments/tables/modules.
 pub trait MacroVal: Debug {}
-
-// TODO name is a relative concept here that we may have to change
-//      a `MacroName` is a optional name/required address in a module, but aliases
-//      are environmental constructs that have a required name/no address.
-//      Maybe, we have a `Handle` with Macro or `MacroName`.
 
 /// Represents some resolved handle to a macro definition.
 ///
@@ -61,7 +54,7 @@ pub struct MacroHandleVal<M: MacroVal> {
 
 impl<M: MacroVal> MacroHandleVal<M> {
     /// Constructs a new handle.
-    fn new(handle: MacroHandle, value: M) -> Self {
+    pub fn new(handle: MacroHandle, value: M) -> Self {
         Self {
             handle: Rc::new(handle),
             value: Rc::new(value),
@@ -89,15 +82,20 @@ impl<M: MacroVal> Clone for MacroHandleVal<M> {
 }
 
 /// A mapping of address to macro value.
-trait MacroByAddress<M: MacroVal> {
+pub trait MacroByAddress<M: MacroVal> {
     /// Retrieves a macro value by some offset.
     fn macro_by_address(&self, address: usize) -> Option<&MacroHandleVal<M>>;
 }
 
 /// A mapping of name to macro value.
-trait MacroByName<M: MacroVal> {
-    fn macro_by_name<N: Borrow<Name>>(&self, name: N) -> Option<&MacroHandleVal<M>>;
+pub trait MacroByName<M: MacroVal> {
+    fn macro_by_name(&self, name: &Name) -> Option<&IndexEntry<M>>;
 }
+
+/// Marker trait indicating that a macro can be looked up by name or address.
+pub trait MacroEnv<M: MacroVal>: MacroByAddress<M> + MacroByName<M> {}
+
+impl<M: MacroVal, T: MacroByAddress<M> + MacroByName<M>> MacroEnv<M> for T {}
 
 /// Represents an ordered table of macros defining addresses from a zero-based offset.
 #[derive(Debug)]
@@ -144,19 +142,16 @@ impl<M: MacroVal> Clone for MacroTable<M> {
     }
 }
 
-/// The entry of the name index--this tracks non-unique names, the distinct case, and
+/// The entry of the name mapping--this tracks non-unique names, the distinct case, and
 /// a sentinel indicating lack of an entry.
 #[derive(Debug)]
-enum IndexEntry<M: MacroVal> {
+pub enum IndexEntry<M: MacroVal> {
     // TODO consider if we really want to track all the conflicts--it is nice for debugging...
     /// Indicates that a name maps to more than one distinct handle.
     Ambiguous(Vector<MacroHandleVal<M>>),
 
     /// Indicates a unique address in the index corresponding to the name.
     Distinct(MacroHandleVal<M>),
-
-    /// Indicates that there is nothing in the index corresponding to the name.
-    Nothing,
 }
 
 impl<M: MacroVal> Clone for IndexEntry<M> {
@@ -164,7 +159,6 @@ impl<M: MacroVal> Clone for IndexEntry<M> {
         match self {
             IndexEntry::Ambiguous(vals) => IndexEntry::Ambiguous(vals.clone()),
             IndexEntry::Distinct(val) => IndexEntry::Distinct(val.clone()),
-            IndexEntry::Nothing => IndexEntry::Nothing,
         }
     }
 }
@@ -173,7 +167,7 @@ impl<M: MacroVal> Clone for IndexEntry<M> {
 #[derive(Debug)]
 struct MacroIndex<M: MacroVal> {
     table: MacroTable<M>,
-    index: HashTrieMap<Name, IndexEntry<M>>,
+    name_index: HashTrieMap<Name, IndexEntry<M>>,
 }
 
 impl<M: MacroVal> MacroIndex<M> {
@@ -181,7 +175,7 @@ impl<M: MacroVal> MacroIndex<M> {
     fn empty() -> Self {
         Self {
             table: MacroTable::empty(),
-            index: HashTrieMap::new(),
+            name_index: HashTrieMap::new(),
         }
     }
 
@@ -199,7 +193,11 @@ impl<M: MacroVal> MacroIndex<M> {
     /// panic.
     ///
     /// A [`MacroHandle::Alias`] will ***only*** associate with the underlying name index.
-    fn with_macro(&self, next_handle: MacroHandle, next_macro_val: M) -> (IndexEntry<M>, Self) {
+    fn with_macro(
+        &self,
+        next_handle: MacroHandle,
+        next_macro_val: M,
+    ) -> (Option<IndexEntry<M>>, Self) {
         let next_macro = MacroHandleVal::new(next_handle, next_macro_val);
 
         // insert if appropriate into the macro table
@@ -220,55 +218,67 @@ impl<M: MacroVal> MacroIndex<M> {
             MacroHandle::Alias(_, name) => Some(name),
         };
         // insert into name index
-        let mut index_entry = IndexEntry::Nothing;
+        let mut index_entry_opt = None;
         let next_index = match potential_name {
             // no name to map--same name index.
-            None => self.index.clone(),
-            Some(name) => match self.index.get(name) {
+            None => self.name_index.clone(),
+            Some(name) => match self.name_index.get(name) {
                 None => {
                     // nothing already is in the index for this name
-                    index_entry = IndexEntry::Distinct(next_macro.clone());
-                    self.index.insert(name.clone(), index_entry.clone())
+                    let index_entry = IndexEntry::Distinct(next_macro.clone());
+                    index_entry_opt = Some(index_entry.clone());
+                    self.name_index.insert(name.clone(), index_entry)
                 }
                 Some(existing) => match existing {
                     IndexEntry::Ambiguous(others) => {
-                        index_entry = IndexEntry::Ambiguous(others.push_back(next_macro.clone()));
-                        self.index.insert(name.clone(), index_entry.clone())
+                        let index_entry =
+                            IndexEntry::Ambiguous(others.push_back(next_macro.clone()));
+                        index_entry_opt = Some(index_entry.clone());
+                        self.name_index.insert(name.clone(), index_entry)
                     }
                     IndexEntry::Distinct(previous) => {
-                        index_entry = IndexEntry::Ambiguous(
+                        let index_entry = IndexEntry::Ambiguous(
                             [previous.clone(), next_macro.clone()].into_iter().collect(),
                         );
-                        self.index.insert(name.clone(), index_entry.clone())
+                        index_entry_opt = Some(index_entry.clone());
+                        self.name_index.insert(name.clone(), index_entry)
                     }
-                    IndexEntry::Nothing => unreachable!("Nothing is not allowed as value in index"),
                 },
             },
         };
 
         (
-            index_entry,
+            index_entry_opt,
             Self {
                 table: next_table,
-                index: next_index,
+                name_index: next_index,
             },
         )
     }
 }
 
 impl<M: MacroVal> MacroByAddress<M> for MacroIndex<M> {
-    fn macro_by_address(&self, _address: usize) -> Option<&MacroHandleVal<M>> {
-        todo!()
+    fn macro_by_address(&self, address: usize) -> Option<&MacroHandleVal<M>> {
+        self.table.macro_by_address(address)
     }
 }
 
 impl<M: MacroVal> MacroByName<M> for MacroIndex<M> {
-    fn macro_by_name<N: Borrow<Name>>(&self, _name: N) -> Option<&MacroHandleVal<M>> {
-        todo!()
+    fn macro_by_name(&self, name: &Name) -> Option<&IndexEntry<M>> {
+        self.name_index.get(name)
     }
 }
 
-/// Represents a module of macros.
+impl<M: MacroVal> Clone for MacroIndex<M> {
+    fn clone(&self) -> Self {
+        MacroIndex {
+            table: self.table.clone(),
+            name_index: self.name_index.clone(),
+        }
+    }
+}
+
+/// Represents the environment for a macro module.
 #[derive(Debug)]
 pub struct Module<M: MacroVal> {
     id: ModuleId,
@@ -284,12 +294,17 @@ impl<M: MacroVal> Module<M> {
         }
     }
 
+    /// Derives a [`ModuleEnv`] for this module.
+    pub fn derive_env(&self) -> ModuleEnv<M> {
+        ModuleEnv::empty(self.clone())
+    }
+
     fn with_handle(&self, next_handle: MacroHandle, next_macro_val: M) -> IonResult<Module<M>> {
-        let (next_index_entry, next_index) = self.index.with_macro(next_handle, next_macro_val);
-        if matches!(&next_index_entry, IndexEntry::Ambiguous(_)) {
+        let (next_index_entry_opt, next_index) = self.index.with_macro(next_handle, next_macro_val);
+        if matches!(&next_index_entry_opt, Some(IndexEntry::Ambiguous(_))) {
             return illegal_operation(format!(
                 "Duplicate macro named in module: {:?}",
-                next_index_entry
+                next_index_entry_opt
             ));
         }
         Ok(Self {
@@ -336,23 +351,40 @@ impl<M: MacroVal> Module<M> {
 }
 
 impl<M: MacroVal> MacroByAddress<M> for Module<M> {
-    delegate! {
-        to self.index {
-            fn macro_by_address(&self, _address: usize) -> Option<&MacroHandleVal<M>>;
-        }
+    fn macro_by_address(&self, address: usize) -> Option<&MacroHandleVal<M>> {
+        self.index.macro_by_address(address)
     }
 }
 
 impl<M: MacroVal> MacroByName<M> for Module<M> {
-    delegate! {
-        to self.index {
-            fn macro_by_name<N: Borrow<Name>>(&self, _name: N) -> Option<&MacroHandleVal<M>>;
+    fn macro_by_name(&self, name: &Name) -> Option<&IndexEntry<M>> {
+        self.index.macro_by_name(name)
+    }
+}
+
+impl<M: MacroVal> Clone for Module<M> {
+    fn clone(&self) -> Self {
+        Module {
+            id: self.id.clone(),
+            index: self.index.clone(),
         }
     }
 }
 
-/// Represents a lookup environment table/index for macros.
+/// Represents the environment for *building* a module.
 #[derive(Debug)]
-pub struct MacroEnv<M: MacroVal> {
+pub struct ModuleEnv<M: MacroVal> {
+    current_module: Module<M>,
     index: MacroIndex<M>,
 }
+
+impl<M: MacroVal> ModuleEnv<M> {
+    pub(self) fn empty(current_module: Module<M>) -> Self {
+        Self {
+            current_module,
+            index: MacroIndex::empty(),
+        }
+    }
+}
+
+// TODO the encoding directive environment and the e-expression environment
