@@ -77,7 +77,7 @@ impl ExternalId {
     /// Creates an external identifier from a name and version.  The version must be `>= 1`
     /// or this returns `Err`.
     pub fn try_new<S: Into<String>>(name: S, version: usize) -> IonResult<Self> {
-        if version <= 0 {
+        if version == 0 {
             illegal_operation(format!("External version must be >= 1: {}", version))
         } else {
             Ok(Self {
@@ -95,7 +95,7 @@ fn illegal_address<T>(address: Address) -> IonResult<T> {
 
 #[inline]
 fn valid_address(address: Address) -> IonResult<()> {
-    if address <= 0 {
+    if address == 0 {
         illegal_address(address)
     } else {
         Ok(())

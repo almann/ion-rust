@@ -126,7 +126,7 @@ impl<M: MacroVal> MacroTable<M> {
 
     /// Returns the count of elements in the table.
     pub fn len(&self) -> usize {
-        return self.table.len();
+        self.table.len()
     }
 }
 
@@ -309,9 +309,7 @@ impl<M: MacroVal> Module<M> {
         next_macro_val: M,
     ) -> IonResult<Module<M>> {
         let next_address = self.index.len();
-        let macro_id = self
-            .id
-            .try_derive_macro_id(opt_name.clone(), next_address)?;
+        let macro_id = self.id.try_derive_macro_id(opt_name, next_address)?;
         // we alias to ourselves for defined macros
         let next_macro_handle = MacroHandle::Bind(MacroBind::Definition(macro_id));
         self.with_handle(next_macro_handle, next_macro_val)
@@ -326,7 +324,7 @@ impl<M: MacroVal> Module<M> {
     ) -> IonResult<Module<M>> {
         let next_address = self.index.len();
         let next_macro_bind =
-            source_macro_id.try_derive_macro_bind_alias(opt_name.clone(), next_address)?;
+            source_macro_id.try_derive_macro_bind_alias(opt_name, next_address)?;
         let next_macro_handle = MacroHandle::Bind(next_macro_bind);
         self.with_handle(next_macro_handle, next_macro_val)
     }
