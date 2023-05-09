@@ -36,8 +36,7 @@ fn roundtrip_var_uint(c: &mut Criterion) {
         let encoded_v1_1_data: &mut Vec<u8> = &mut Vec::with_capacity(encoded_length);
         let decoded_v1_1_data: &mut Vec<u64> = &mut Vec::with_capacity(NUM_INTEGERS);
 
-        let mut group =
-            c.benchmark_group(format!("VarUInt Encoding: {} byte(s)", int_size_in_bytes));
+        let mut group = c.benchmark_group("VarUInt Encoding");
 
         group.bench_with_input(
             BenchmarkId::new("Ion v1.0", int_size_in_bytes),
@@ -70,8 +69,7 @@ fn roundtrip_var_uint(c: &mut Criterion) {
 
         group.finish();
 
-        let mut group =
-            c.benchmark_group(format!("VarUInt Decoding: {} byte(s)", int_size_in_bytes));
+        let mut group = c.benchmark_group("VarUInt Decoding");
 
         group.bench_with_input(
             BenchmarkId::new("Ion v1.0", int_size_in_bytes),
