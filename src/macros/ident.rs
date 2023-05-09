@@ -93,6 +93,7 @@ fn illegal_address<T>(address: Address) -> IonResult<T> {
     illegal_operation(format!("Invalid address for macro: {}", address))
 }
 
+// FIXME no need to check address here.
 #[inline]
 fn valid_address(address: Address) -> IonResult<()> {
     if address == 0 {
@@ -101,6 +102,8 @@ fn valid_address(address: Address) -> IonResult<()> {
         Ok(())
     }
 }
+
+// TODO spelling of external... shared?
 
 /// Represents the unique module identifier in a given encoding context.
 ///
@@ -266,6 +269,17 @@ pub enum UnqualifiedMacroRef {
     Name(Name),
     Address(Address),
 }
+
+// TODO raise the issue around E-Expressions having unqualified names as `:foo`
+//      E-EXPRESSIONS:
+//      (:foo ...)    // unqualified foo <-- foo anywhere, provided installed in macro table
+//      (:5 ...)      // partially qualified 5 <-- 5 in the local macro table
+//      MDL:
+//      (foo ...)     // MDL unqualified foo <-- foo anywhere
+//      (':foo' ...)  // MDL partially qualified foo <-- foo in the current module
+//      (':5' ...)    // MDL partially qualified 5 <-- 5 in the current module
+
+// TODO should we collapse Partial into something like Local(Address)
 
 /// Reference to a macro, which may be [*unqualified*][u], [*partially qualified*][p],
 /// or [*fully qualified*][f].

@@ -16,6 +16,8 @@ pub mod types;
 //     we cannot do this with TryFrom
 // TODO evaluate if this should even be here...
 
+// TODO Str is pretty overloaded--consider a better name.
+
 /// Generically parse from anything that can be represented as `&str`.
 pub trait ParseStr
 where

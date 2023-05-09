@@ -184,6 +184,8 @@ impl Display for Cardinality {
     }
 }
 
+// TODO grouping?
+
 /// Indicates a normal parameter or *rest* parameter.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ParamMode {
@@ -199,6 +201,7 @@ pub enum ParamMode {
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct ParamType {
     arg_type: StaticType,
+    // FIXME remove this
     arg_cardinality: Cardinality,
     stream_cardinality: Cardinality,
     param_mode: ParamMode,
@@ -326,6 +329,7 @@ impl Display for MacroType {
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ValueType {
     Union(UnionType),
+    // TODO fix spelling, Concrete?
     Tagged(IonType),
     Primitive(PrimitiveType),
 }

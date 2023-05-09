@@ -25,6 +25,9 @@ use rpds::{HashTrieMap, Vector};
 use std::fmt::Debug;
 use std::rc::Rc;
 
+// TODO better name for this concept (MacroVal seems to abstract).
+// TODO add some examples in the data structures to where in MDL or the like this shows up.
+
 /// Marker trait for things that can be macro values within environments/tables/modules.
 pub trait MacroVal: Debug {}
 
