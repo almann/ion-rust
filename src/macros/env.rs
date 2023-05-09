@@ -92,11 +92,6 @@ pub trait MacroByName<M: MacroVal> {
     fn macro_by_name(&self, name: &Name) -> Option<&IndexEntry<M>>;
 }
 
-/// Marker trait indicating that a macro can be looked up by name or address.
-pub trait MacroEnv<M: MacroVal>: MacroByAddress<M> + MacroByName<M> {}
-
-impl<M: MacroVal, T: MacroByAddress<M> + MacroByName<M>> MacroEnv<M> for T {}
-
 /// Represents an ordered table of macros defining addresses from a zero-based offset.
 #[derive(Debug)]
 pub struct MacroTable<M: MacroVal> {
@@ -138,6 +133,49 @@ impl<M: MacroVal> Clone for MacroTable<M> {
     fn clone(&self) -> Self {
         MacroTable {
             table: self.table.clone(),
+        }
+    }
+}
+
+/// Association of name to modules.  This corresponds to the loaded modules in some context
+/// that is used for qualified names to resolve
+#[derive(Debug)]
+pub struct ModuleMap<M: MacroVal> {
+    modules: HashTrieMap<Name, Module<M>>,
+}
+
+impl<M: MacroVal> ModuleMap<M> {
+    /// Creates an empty module map.
+    pub fn empty() -> Self {
+        Self {
+            modules: HashTrieMap::new(),
+        }
+    }
+
+    /// Adds a module to the map, returning a new map containing it.
+    ///
+    /// This returns `Err` if the name is already mapped to a module.
+    pub fn try_with_module(&self, name: Name, module: Module<M>) -> IonResult<Self> {
+        match self.modules.get(&name) {
+            None => Ok(Self {
+                modules: self.modules.insert(name, module),
+            }),
+            Some(module) => {
+                illegal_operation(format!("Duplicate module name {} for {:?}", name, module))
+            }
+        }
+    }
+
+    /// Retrieves a mapped module.
+    pub fn module(&self, name: &Name) -> Option<&Module<M>> {
+        self.modules.get(name)
+    }
+}
+
+impl<M: MacroVal> Clone for ModuleMap<M> {
+    fn clone(&self) -> Self {
+        ModuleMap {
+            modules: self.modules.clone(),
         }
     }
 }
@@ -294,11 +332,6 @@ impl<M: MacroVal> Module<M> {
         }
     }
 
-    /// Derives a [`ModuleEnv`] for this module.
-    pub fn derive_env(&self) -> ModuleEnv<M> {
-        ModuleEnv::empty(self.clone())
-    }
-
     fn with_handle(&self, next_handle: MacroHandle, next_macro_val: M) -> IonResult<Module<M>> {
         let (next_index_entry_opt, next_index) = self.index.with_macro(next_handle, next_macro_val);
         if matches!(&next_index_entry_opt, Some(IndexEntry::Ambiguous(_))) {
@@ -371,18 +404,39 @@ impl<M: MacroVal> Clone for Module<M> {
     }
 }
 
-/// Represents the environment for *building* a module.
+/// Represents an environment for operating with macros.
+///
+/// This contains the loaded [`ModuleMap`], the aliases (name to macro mapping),
+/// and the [`MacroTable`] of local addresses that represents the macros for environment.
+///
+/// When *building modules*, the environment's macro table is not used.
+/// When building *encoding contexts*, the environment's table is used to assign
+/// local addresses for E-expressions.
+///
+/// Unlike [`Module`], [`MacroBind::Definition`] is never possible as a [`MacroHandle::Bind`].
+/// Environments that use a table (i.e., encoding contexts) will use [`MacroBind::Alias`]
+/// to assign slots to that table (and associated names). Environments that do not
+/// have a table (i.e., module environments), only use [`MacroHandle::Alias`] handles.
 #[derive(Debug)]
-pub struct ModuleEnv<M: MacroVal> {
-    current_module: Module<M>,
-    index: MacroIndex<M>,
+pub struct MacroEnv<M: MacroVal> {
+    modules: ModuleMap<M>,
+    aliases: MacroIndex<M>,
 }
 
-impl<M: MacroVal> ModuleEnv<M> {
-    pub(self) fn empty(current_module: Module<M>) -> Self {
+impl<M: MacroVal> MacroEnv<M> {
+    pub fn empty() -> Self {
         Self {
-            current_module,
-            index: MacroIndex::empty(),
+            modules: ModuleMap::empty(),
+            aliases: MacroIndex::empty(),
+        }
+    }
+}
+
+impl<M: MacroVal> Clone for MacroEnv<M> {
+    fn clone(&self) -> Self {
+        MacroEnv {
+            modules: self.modules.clone(),
+            aliases: self.aliases.clone(),
         }
     }
 }
