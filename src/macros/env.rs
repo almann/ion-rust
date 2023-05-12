@@ -21,6 +21,7 @@
 use crate::macros::ident::{Addressable, MacroBind, MacroId, ModuleId, Name};
 use crate::result::illegal_operation;
 use crate::IonResult;
+use delegate::delegate;
 use rpds::{HashTrieMap, Vector};
 use std::fmt::Debug;
 use std::rc::Rc;
@@ -386,17 +387,24 @@ impl<M: MacroVal> Module<M> {
     }
 }
 
-impl<M: MacroVal> MacroByAddress<M> for Module<M> {
-    fn macro_by_address(&self, address: usize) -> Option<&MacroHandleVal<M>> {
-        self.index.macro_by_address(address)
-    }
+/// Simple macro to create the delegate lookups
+macro_rules! delegate_macro_lookup {
+    ($t:ty, $me:ident, $exp:expr) => {
+        impl<M: MacroVal> MacroByAddress<M> for Module<M> {
+            fn macro_by_address(&$me, address: usize) -> Option<&MacroHandleVal<M>> {
+                $exp.macro_by_address(address)
+            }
+        }
+
+        impl<M: MacroVal> MacroByName<M> for Module<M> {
+            fn macro_by_name(&$me, name: &Name) -> Option<&IndexEntry<M>> {
+                $exp.macro_by_name(name)
+            }
+        }
+    };
 }
 
-impl<M: MacroVal> MacroByName<M> for Module<M> {
-    fn macro_by_name(&self, name: &Name) -> Option<&IndexEntry<M>> {
-        self.index.macro_by_name(name)
-    }
-}
+delegate_macro_lookup!(Module<M>, self, self.index);
 
 impl<M: MacroVal> Clone for Module<M> {
     fn clone(&self) -> Self {
@@ -433,7 +441,15 @@ impl<M: MacroVal> MacroEnv<M> {
             aliases: MacroIndex::empty(),
         }
     }
+
+    delegate! {
+        to self.modules {
+            pub fn module(&self, name: &Name) -> Option<&Module<M>>;
+        }
+    }
 }
+
+delegate_macro_lookup!(MacroEnv<M>, self, self.aliases);
 
 impl<M: MacroVal> Clone for MacroEnv<M> {
     fn clone(&self) -> Self {
