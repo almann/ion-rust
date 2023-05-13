@@ -442,6 +442,14 @@ impl<M: MacroVal> MacroEnv<M> {
         }
     }
 
+    /// Constructs a new environment with a module binding.
+    pub fn try_with_module(&self, name: Name, module: Module<M>) -> IonResult<Self> {
+        Ok(Self {
+            modules: self.modules.try_with_module(name, module)?,
+            aliases: self.aliases.clone(),
+        })
+    }
+
     delegate! {
         to self.modules {
             pub fn module(&self, name: &Name) -> Option<&Module<M>>;
