@@ -390,13 +390,13 @@ impl<M: MacroVal> Module<M> {
 /// Simple macro to create the delegate lookups
 macro_rules! delegate_macro_lookup {
     ($t:ty, $me:ident, $exp:expr) => {
-        impl<M: MacroVal> MacroByAddress<M> for Module<M> {
+        impl<M: MacroVal> MacroByAddress<M> for $t {
             fn macro_by_address(&$me, address: usize) -> Option<&MacroHandleVal<M>> {
                 $exp.macro_by_address(address)
             }
         }
 
-        impl<M: MacroVal> MacroByName<M> for Module<M> {
+        impl<M: MacroVal> MacroByName<M> for $t {
             fn macro_by_name(&$me, name: &Name) -> Option<&IndexEntry<M>> {
                 $exp.macro_by_name(name)
             }
