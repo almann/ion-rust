@@ -143,7 +143,7 @@ impl<M: MacroVal> Clone for MacroTable<M> {
 }
 
 /// A mapping of name to module.
-pub trait ModuleMapping<M: MacroVal>: Sized {
+pub trait ModuleMappable<M: MacroVal>: Sized {
     /// Constructs a version of this mapping bound with a new module associated with it.
     fn try_with_module(&self, name: Name, module: Module<M>) -> IonResult<Self>;
 
@@ -167,7 +167,7 @@ impl<M: MacroVal> ModuleMap<M> {
     }
 }
 
-impl<M: MacroVal> ModuleMapping<M> for ModuleMap<M> {
+impl<M: MacroVal> ModuleMappable<M> for ModuleMap<M> {
     fn try_with_module(&self, name: Name, module: Module<M>) -> IonResult<Self> {
         match self.modules.get(&name) {
             None => Ok(ModuleMap {
@@ -332,6 +332,24 @@ impl<M: MacroVal> Clone for MacroMap<M> {
     }
 }
 
+/// Represents a context that can define or alias macro definitions.
+pub trait MacroBindable<M: MacroVal>: Sized {
+    /// Defines a macro within this context with an optional name returning the new module containing
+    /// it.
+    ///
+    /// Note that such a macro will have a [`MacroId`] that is bound to the identity of
+    /// this module.
+    fn with_defined_macro(&self, opt_name: Option<Name>, next_macro_val: M) -> IonResult<Self>;
+
+    /// Aliases a macro within this context with an optional name to the given macro identifier.
+    fn with_aliased_macro(
+        &self,
+        opt_name: Option<Name>,
+        source_macro_id: MacroId,
+        next_macro_val: M,
+    ) -> IonResult<Self>;
+}
+
 /// Represents the environment for a macro module.
 #[derive(Debug)]
 pub struct Module<M: MacroVal> {
@@ -348,6 +366,7 @@ impl<M: MacroVal> Module<M> {
         }
     }
 
+    /// Internal macro alias/definition binding.
     fn with_handle(&self, next_handle: MacroHandle, next_macro_val: M) -> IonResult<Module<M>> {
         let (next_index_entry_opt, next_index) = self.map.with_macro(next_handle, next_macro_val);
         if matches!(&next_index_entry_opt, Some(MacroEntry::Ambiguous(_))) {
@@ -362,16 +381,14 @@ impl<M: MacroVal> Module<M> {
         })
     }
 
-    /// Defines a macro within this module with an optional name returning the new module containing
-    /// it.
-    ///
-    /// Note that such a macro will have a [`MacroId`] that is bound to the identity of
-    /// this module.
-    pub fn with_defined_macro(
-        &self,
-        opt_name: Option<Name>,
-        next_macro_val: M,
-    ) -> IonResult<Module<M>> {
+    /// Returns the underlying module identifier.
+    pub fn id(&self) -> &ModuleId {
+        &self.id
+    }
+}
+
+impl<M: MacroVal> MacroBindable<M> for Module<M> {
+    fn with_defined_macro(&self, opt_name: Option<Name>, next_macro_val: M) -> IonResult<Self> {
         let next_address = self.map.len();
         let macro_id = self.id.try_derive_macro_id(opt_name, next_address)?;
         // we alias to ourselves for defined macros
@@ -379,23 +396,17 @@ impl<M: MacroVal> Module<M> {
         self.with_handle(next_macro_handle, next_macro_val)
     }
 
-    /// Aliases a macro within this module with an optional name to the given macro identifier.
-    pub fn with_aliased_macro(
+    fn with_aliased_macro(
         &self,
         opt_name: Option<Name>,
         source_macro_id: MacroId,
         next_macro_val: M,
-    ) -> IonResult<Module<M>> {
+    ) -> IonResult<Self> {
         let next_address = self.map.len();
         let next_macro_bind =
             source_macro_id.try_derive_macro_bind_alias(opt_name, next_address)?;
         let next_macro_handle = MacroHandle::Bind(next_macro_bind);
         self.with_handle(next_macro_handle, next_macro_val)
-    }
-
-    /// Returns the underlying module identifier.
-    pub fn id(&self) -> &ModuleId {
-        &self.id
     }
 }
 
@@ -458,7 +469,7 @@ impl<M: MacroVal> MacroEnv<M> {
 
 delegate_macro_lookup!(MacroEnv<M>, self, self.aliases);
 
-impl<M: MacroVal> ModuleMapping<M> for MacroEnv<M> {
+impl<M: MacroVal> ModuleMappable<M> for MacroEnv<M> {
     fn try_with_module(&self, name: Name, module: Module<M>) -> IonResult<Self> {
         Ok(Self {
             modules: self.modules.try_with_module(name, module)?,
@@ -499,7 +510,7 @@ impl<M: MacroVal> MacroModuleEnv<M> {
 
 delegate_macro_lookup!(MacroModuleEnv<M>, self, self.env);
 
-impl<M: MacroVal> ModuleMapping<M> for MacroModuleEnv<M> {
+impl<M: MacroVal> ModuleMappable<M> for MacroModuleEnv<M> {
     fn try_with_module(&self, name: Name, module: Module<M>) -> IonResult<Self> {
         Ok(Self {
             env: self.env.try_with_module(name, module)?,
@@ -509,6 +520,29 @@ impl<M: MacroVal> ModuleMapping<M> for MacroModuleEnv<M> {
 
     fn module(&self, name: &Name) -> Option<&Module<M>> {
         self.env.module(name)
+    }
+}
+
+impl<M: MacroVal> MacroBindable<M> for MacroModuleEnv<M> {
+    fn with_defined_macro(&self, opt_name: Option<Name>, next_macro_val: M) -> IonResult<Self> {
+        Ok(Self {
+            env: self.env.clone(),
+            module: self.module.with_defined_macro(opt_name, next_macro_val)?,
+        })
+    }
+
+    fn with_aliased_macro(
+        &self,
+        opt_name: Option<Name>,
+        source_macro_id: MacroId,
+        next_macro_val: M,
+    ) -> IonResult<Self> {
+        Ok(Self {
+            env: self.env.clone(),
+            module: self
+                .module
+                .with_aliased_macro(opt_name, source_macro_id, next_macro_val)?,
+        })
     }
 }
 
