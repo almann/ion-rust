@@ -21,7 +21,6 @@
 use crate::macros::ident::{Addressable, MacroBind, MacroId, ModuleId, Name};
 use crate::result::illegal_operation;
 use crate::IonResult;
-use delegate::delegate;
 use rpds::{HashTrieMap, Vector};
 use std::fmt::Debug;
 use std::rc::Rc;
@@ -76,6 +75,7 @@ impl<M: MacroVal> MacroHandleVal<M> {
     }
 }
 
+// XXX we have to implement Clone, because derive requires M: Clone
 impl<M: MacroVal> Clone for MacroHandleVal<M> {
     fn clone(&self) -> Self {
         MacroHandleVal {
@@ -133,12 +133,22 @@ impl<M: MacroVal> MacroByAddress<M> for MacroTable<M> {
     }
 }
 
+// XXX we have to implement Clone, because derive requires M: Clone
 impl<M: MacroVal> Clone for MacroTable<M> {
     fn clone(&self) -> Self {
         MacroTable {
             table: self.table.clone(),
         }
     }
+}
+
+/// A mapping of name to module.
+pub trait ModuleMapping<M: MacroVal>: Sized {
+    /// Constructs a version of this mapping bound with a new module associated with it.
+    fn try_with_module(&self, name: Name, module: Module<M>) -> IonResult<Self>;
+
+    /// Returns the module associated with a name if it exists.
+    fn module(&self, name: &Name) -> Option<&Module<M>>;
 }
 
 /// Association of name to modules.  This corresponds to the loaded modules in some context
@@ -155,13 +165,12 @@ impl<M: MacroVal> ModuleMap<M> {
             modules: HashTrieMap::new(),
         }
     }
+}
 
-    /// Adds a module to the map, returning a new map containing it.
-    ///
-    /// This returns `Err` if the name is already mapped to a module.
-    pub fn try_with_module(&self, name: Name, module: Module<M>) -> IonResult<Self> {
+impl<M: MacroVal> ModuleMapping<M> for ModuleMap<M> {
+    fn try_with_module(&self, name: Name, module: Module<M>) -> IonResult<Self> {
         match self.modules.get(&name) {
-            None => Ok(Self {
+            None => Ok(ModuleMap {
                 modules: self.modules.insert(name, module),
             }),
             Some(module) => {
@@ -170,12 +179,12 @@ impl<M: MacroVal> ModuleMap<M> {
         }
     }
 
-    /// Retrieves a mapped module.
-    pub fn module(&self, name: &Name) -> Option<&Module<M>> {
+    fn module(&self, name: &Name) -> Option<&Module<M>> {
         self.modules.get(name)
     }
 }
 
+// XXX we have to implement Clone, because derive requires M: Clone
 impl<M: MacroVal> Clone for ModuleMap<M> {
     fn clone(&self) -> Self {
         ModuleMap {
@@ -196,6 +205,7 @@ pub enum IndexEntry<M: MacroVal> {
     Distinct(MacroHandleVal<M>),
 }
 
+// XXX we have to implement Clone, because derive requires M: Clone
 impl<M: MacroVal> Clone for IndexEntry<M> {
     fn clone(&self) -> Self {
         match self {
@@ -311,6 +321,7 @@ impl<M: MacroVal> MacroByName<M> for MacroIndex<M> {
     }
 }
 
+// XXX we have to implement Clone, because derive requires M: Clone
 impl<M: MacroVal> Clone for MacroIndex<M> {
     fn clone(&self) -> Self {
         MacroIndex {
@@ -406,6 +417,7 @@ macro_rules! delegate_macro_lookup {
 
 delegate_macro_lookup!(Module<M>, self, self.index);
 
+// XXX we have to implement Clone, because derive requires M: Clone
 impl<M: MacroVal> Clone for Module<M> {
     fn clone(&self) -> Self {
         Module {
@@ -441,24 +453,24 @@ impl<M: MacroVal> MacroEnv<M> {
             aliases: MacroIndex::empty(),
         }
     }
+}
 
-    /// Constructs a new environment with a module binding.
-    pub fn try_with_module(&self, name: Name, module: Module<M>) -> IonResult<Self> {
+delegate_macro_lookup!(MacroEnv<M>, self, self.aliases);
+
+impl<M: MacroVal> ModuleMapping<M> for MacroEnv<M> {
+    fn try_with_module(&self, name: Name, module: Module<M>) -> IonResult<Self> {
         Ok(Self {
             modules: self.modules.try_with_module(name, module)?,
             aliases: self.aliases.clone(),
         })
     }
 
-    delegate! {
-        to self.modules {
-            pub fn module(&self, name: &Name) -> Option<&Module<M>>;
-        }
+    fn module(&self, name: &Name) -> Option<&Module<M>> {
+        self.modules.module(name)
     }
 }
 
-delegate_macro_lookup!(MacroEnv<M>, self, self.aliases);
-
+// XXX we have to implement Clone, because derive requires M: Clone
 impl<M: MacroVal> Clone for MacroEnv<M> {
     fn clone(&self) -> Self {
         MacroEnv {
@@ -468,4 +480,43 @@ impl<M: MacroVal> Clone for MacroEnv<M> {
     }
 }
 
-// TODO the encoding directive environment and the e-expression environment
+/// Environment for *building* a module.
+pub struct MacroModuleEnv<M: MacroVal> {
+    env: MacroEnv<M>,
+    module: Module<M>,
+}
+
+impl<M: MacroVal> MacroModuleEnv<M> {
+    /// Constructs a new environment with a module binding.
+    pub fn try_with_module(&self, name: Name, module: Module<M>) -> IonResult<Self> {
+        Ok(Self {
+            env: self.env.try_with_module(name, module)?,
+            module: self.module.clone(),
+        })
+    }
+}
+
+delegate_macro_lookup!(MacroModuleEnv<M>, self, self.env);
+
+impl<M: MacroVal> ModuleMapping<M> for MacroModuleEnv<M> {
+    fn try_with_module(&self, name: Name, module: Module<M>) -> IonResult<Self> {
+        Ok(Self {
+            env: self.env.try_with_module(name, module)?,
+            module: self.module.clone(),
+        })
+    }
+
+    fn module(&self, name: &Name) -> Option<&Module<M>> {
+        self.env.module(name)
+    }
+}
+
+// XXX we have to implement Clone, because derive requires M: Clone
+impl<M: MacroVal> Clone for MacroModuleEnv<M> {
+    fn clone(&self) -> Self {
+        MacroModuleEnv {
+            env: self.env.clone(),
+            module: self.module.clone(),
+        }
+    }
+}
