@@ -332,7 +332,9 @@ impl<M: MacroVal> Clone for MacroMap<M> {
     }
 }
 
-/// Represents a context that can define or alias macro definitions.
+/// Represents a context that can define or alias macro definitions that are then addressable.
+///
+/// This corresponds to constructs like `(macro ...)` and `(export ...)` in a module.
 pub trait MacroBindable<M: MacroVal>: Sized {
     /// Defines a macro within this context with an optional name returning the new module containing
     /// it.
@@ -348,6 +350,14 @@ pub trait MacroBindable<M: MacroVal>: Sized {
         source_macro_id: MacroId,
         next_macro_val: M,
     ) -> IonResult<Self>;
+}
+
+/// Represents a context that can create macro name aliases that are not given an address.
+///
+/// This corresponds to constructs like `(use ...)` and `(alias ...)` within a module.
+pub trait MacroAliasable<M: MacroVal>: Sized {
+    /// Aliases a [`MacroBind`] to a local name.
+    fn with_name_aliased_macro(&self, name: Name, source: MacroBind) -> IonResult<Self>;
 }
 
 /// Represents the environment for a macro module.
