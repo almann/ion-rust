@@ -6,11 +6,15 @@ use crate::binary::non_blocking::type_descriptor::{
 use crate::binary::uint::DecodedUInt;
 use crate::binary::var_int::VarInt;
 use crate::binary::var_uint::VarUInt;
-use crate::result::{decoding_error, incomplete_data_error, incomplete_data_error_raw};
-use crate::types::{Int, UInt};
-use crate::{IonResult, IonType};
+use crate::lazy::binary::encoded_value::EncodedValue;
+use crate::lazy::binary::raw::lazy_raw_value::LazyRawValue;
+use crate::result::{
+    decoding_error, decoding_error_raw, incomplete_data_error, incomplete_data_error_raw,
+};
+use crate::types::UInt;
+use crate::{Int, IonResult, IonType};
 use num_bigint::{BigInt, BigUint, Sign};
-use std::io::Read;
+use std::fmt::{Debug, Formatter};
 use std::mem;
 
 // This limit is used for stack-allocating buffer space to encode/decode UInts.
@@ -23,141 +27,143 @@ const INT_STACK_BUFFER_SIZE: usize = 16;
 // This number was chosen somewhat arbitrarily and could be lifted if a use case demands it.
 const MAX_INT_SIZE_IN_BYTES: usize = 2048;
 
-/// A stack-allocated wrapper around an `AsRef<[u8]>` that provides methods to read Ion's
-/// encoding primitives.
+/// A buffer of unsigned bytes that can be cheaply copied and which defines methods for parsing
+/// the various encoding elements of a binary Ion stream.
 ///
-/// When the wrapped type is a `Vec<u8>`, data can be appended to the buffer between read
-/// operations.
-#[derive(Debug, PartialEq)]
-pub(crate) struct BinaryBuffer<A: AsRef<[u8]>> {
-    data: A,
-    start: usize,
-    end: usize,
-    total_consumed: usize,
+/// Upon success, each parsing method on the `ImmutableBuffer` will return the value that was read
+/// and a copy of the `ImmutableBuffer` that starts _after_ the bytes that were parsed.
+///
+/// Methods that `peek` at the input stream do not return a copy of the buffer.
+#[derive(PartialEq, Clone, Copy)]
+pub(crate) struct ImmutableBuffer<'a> {
+    // `data` is a slice of remaining data in the larger input stream.
+    // `offset` is the position in the overall input stream where that slice begins.
+    //
+    // input: 00 01 02 03 04 05 06 07 08 09
+    //                          └────┬────┘
+    //                          data: &[u8]
+    //                          offset: 6
+    data: &'a [u8],
+    offset: usize,
 }
 
-impl<A: AsRef<[u8]>> BinaryBuffer<A> {
-    /// Constructs a new BinaryBuffer that wraps `data`.
+impl<'a> Debug for ImmutableBuffer<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ImmutableBuffer {{")?;
+        for byte in self.bytes().iter().take(16) {
+            write!(f, "{:x?} ", *byte)?;
+        }
+        write!(f, "}}")
+    }
+}
+
+pub(crate) type ParseResult<'a, T> = IonResult<(T, ImmutableBuffer<'a>)>;
+
+impl<'a> ImmutableBuffer<'a> {
+    /// Constructs a new `ImmutableBuffer` that wraps `data`.
     #[inline]
-    pub fn new(data: A) -> BinaryBuffer<A> {
-        let end = data.as_ref().len();
-        BinaryBuffer {
-            data,
-            start: 0,
-            end,
-            total_consumed: 0,
-        }
+    pub fn new(data: &[u8]) -> ImmutableBuffer {
+        Self::new_with_offset(data, 0)
     }
 
-    /// Creates an independent view of the `BinaryBuffer`'s data. The `BinaryBuffer` that is
-    /// returned tracks its own position and consumption without affecting the original.
-    pub fn slice(&self) -> BinaryBuffer<&A> {
-        BinaryBuffer {
-            data: &self.data,
-            start: self.start,
-            end: self.end,
-            total_consumed: self.total_consumed,
-        }
+    pub fn new_with_offset(data: &[u8], offset: usize) -> ImmutableBuffer {
+        ImmutableBuffer { data, offset }
     }
 
-    /// Returns a slice containing all of the buffer's remaining bytes.
+    /// Returns a slice containing all of the buffer's bytes.
     pub fn bytes(&self) -> &[u8] {
-        &self.data.as_ref()[self.start..self.end]
-    }
-
-    /// Returns a slice containing all of the buffer's bytes. This includes all of the consumed
-    /// bytes, and remaining unconsumed bytes.
-    pub(crate) fn raw_bytes(&self) -> &[u8] {
-        self.data.as_ref()
+        self.data
     }
 
     /// Gets a slice from the buffer starting at `offset` and ending at `offset + length`.
     /// The caller must check that the buffer contains `length + offset` bytes prior
     /// to calling this method.
-    pub fn bytes_range(&self, offset: usize, length: usize) -> &[u8] {
-        let from = self.start + offset;
-        let to = from + length;
-        &self.data.as_ref()[from..to]
+    pub fn bytes_range(&self, offset: usize, length: usize) -> &'a [u8] {
+        &self.data[offset..offset + length]
     }
 
-    /// Returns the number of bytes that have been marked as read either via the
-    /// [`consume`](Self::consume) method or one of the `read_*` methods.
-    pub fn total_consumed(&self) -> usize {
-        self.total_consumed
+    /// Like [`Self::bytes_range`] above, but returns an updated copy of the [`ImmutableBuffer`]
+    /// instead of a `&[u8]`.
+    pub fn slice(&self, offset: usize, length: usize) -> ImmutableBuffer<'a> {
+        ImmutableBuffer {
+            data: self.bytes_range(offset, length),
+            offset: self.offset + offset,
+        }
     }
 
-    /// Returns the number of unread bytes left in the buffer.
-    pub fn remaining(&self) -> usize {
-        self.end - self.start
+    /// Returns the number of bytes between the start of the original input byte array and the
+    /// subslice of that byte array that this `ImmutableBuffer` represents.
+    pub fn offset(&self) -> usize {
+        self.offset
     }
 
-    /// Returns `true` if there are no bytes remaining in the buffer. Otherwise, returns `false`.
+    /// Returns the number of bytes in the buffer.
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Returns `true` if there are no bytes in the buffer. Otherwise, returns `false`.
     pub fn is_empty(&self) -> bool {
-        self.start == self.end
+        self.data.is_empty()
     }
 
     /// If the buffer is not empty, returns `Some(_)` containing the next byte in the buffer.
     /// Otherwise, returns `None`.
     pub fn peek_next_byte(&self) -> Option<u8> {
-        self.data.as_ref().get(self.start).copied()
+        self.data.first().copied()
     }
 
     /// If there are at least `n` bytes left in the buffer, returns `Some(_)` containing a slice
     /// with the first `n` bytes. Otherwise, returns `None`.
-    pub fn peek_n_bytes(&self, n: usize) -> Option<&[u8]> {
-        self.data.as_ref().get(self.start..self.start + n)
+    pub fn peek_n_bytes(&self, n: usize) -> Option<&'a [u8]> {
+        self.data.get(..n)
     }
 
-    /// Marks the first `num_bytes_to_consume` bytes in the buffer as having been read.
-    ///
-    /// After data has been inspected using the `peek` methods, those bytes can be marked as read
-    /// by calling the `consume` method.
-    ///
-    /// Note that the various `read_*` methods to parse Ion encoding primitives automatically
-    /// consume the bytes they read if they are successful.
+    /// Creates a copy of this `ImmutableBuffer` that begins `num_bytes_to_consume` further into the
+    /// slice.
     #[inline]
-    pub fn consume(&mut self, num_bytes_to_consume: usize) {
+    pub fn consume(&self, num_bytes_to_consume: usize) -> Self {
         // This assertion is always run during testing but is removed in the release build.
-        debug_assert!(num_bytes_to_consume <= self.remaining());
-        self.start += num_bytes_to_consume;
-        self.total_consumed += num_bytes_to_consume;
+        debug_assert!(num_bytes_to_consume <= self.len());
+        Self {
+            data: &self.data[num_bytes_to_consume..],
+            offset: self.offset + num_bytes_to_consume,
+        }
     }
 
-    /// Reads (but does not consume) the first byte in the buffer and returns it as a
-    /// [TypeDescriptor].
+    /// Reads the first byte in the buffer and returns it as a [TypeDescriptor].
+    #[inline]
     pub fn peek_type_descriptor(&self) -> IonResult<TypeDescriptor> {
         if self.is_empty() {
-            return incomplete_data_error("a type descriptor", self.total_consumed());
+            return incomplete_data_error("a type descriptor", self.offset());
         }
-        let next_byte = self.data.as_ref()[self.start];
+        let next_byte = self.data[0];
         Ok(ION_1_0_TYPE_DESCRIPTORS[next_byte as usize])
     }
 
     /// Reads the first four bytes in the buffer as an Ion version marker. If it is successful,
-    /// returns an `Ok(_)` containing a `(major, minor)` version tuple and consumes the
-    /// source bytes.
+    /// returns an `Ok(_)` containing a `(major, minor)` version tuple.
     ///
     /// See: <https://amazon-ion.github.io/ion-docs/docs/binary.html#value-streams>
-    pub fn read_ivm(&mut self) -> IonResult<(u8, u8)> {
+    pub fn read_ivm(self) -> ParseResult<'a, (u8, u8)> {
         let bytes = self
             .peek_n_bytes(IVM.len())
-            .ok_or_else(|| incomplete_data_error_raw("an IVM", self.total_consumed()))?;
+            .ok_or_else(|| incomplete_data_error_raw("an IVM", self.offset()))?;
 
         match bytes {
             [0xE0, major, minor, 0xEA] => {
                 let version = (*major, *minor);
-                self.consume(IVM.len());
-                Ok(version)
+                Ok((version, self.consume(IVM.len())))
             }
             invalid_ivm => decoding_error(format!("invalid IVM: {invalid_ivm:?}")),
         }
     }
 
     /// Reads a `VarUInt` encoding primitive from the beginning of the buffer. If it is successful,
-    /// returns an `Ok(_)` containing its [VarUInt] representation and consumes the source bytes.
+    /// returns an `Ok(_)` containing its [VarUInt] representation.
     ///
     /// See: <https://amazon-ion.github.io/ion-docs/docs/binary.html#varuint-and-varint-fields>
-    pub fn read_var_uint(&mut self) -> IonResult<VarUInt> {
+    pub fn read_var_uint(self) -> ParseResult<'a, VarUInt> {
         const BITS_PER_ENCODED_BYTE: usize = 7;
         const STORAGE_SIZE_IN_BITS: usize = mem::size_of::<usize>() * 8;
         const MAX_ENCODED_SIZE_IN_BYTES: usize = STORAGE_SIZE_IN_BITS / BITS_PER_ENCODED_BYTE;
@@ -183,19 +189,21 @@ impl<A: AsRef<[u8]>> BinaryBuffer<A> {
                         MAX_ENCODED_SIZE_IN_BYTES,
                     );
                 }
-                self.consume(encoded_size_in_bytes);
-                return Ok(VarUInt::new(magnitude, encoded_size_in_bytes));
+                return Ok((
+                    VarUInt::new(magnitude, encoded_size_in_bytes),
+                    self.consume(encoded_size_in_bytes),
+                ));
             }
         }
 
-        incomplete_data_error("a VarUInt", self.total_consumed() + encoded_size_in_bytes)
+        incomplete_data_error("a VarUInt", self.offset() + encoded_size_in_bytes)
     }
 
     /// Reads a `VarInt` encoding primitive from the beginning of the buffer. If it is successful,
-    /// returns an `Ok(_)` containing its [VarInt] representation and consumes the source bytes.
+    /// returns an `Ok(_)` containing its [VarInt] representation.
     ///
     /// See: <https://amazon-ion.github.io/ion-docs/docs/binary.html#varuint-and-varint-fields>
-    pub fn read_var_int(&mut self) -> IonResult<VarInt> {
+    pub fn read_var_int(self) -> ParseResult<'a, VarInt> {
         const BITS_PER_ENCODED_BYTE: usize = 7;
         const STORAGE_SIZE_IN_BITS: usize = mem::size_of::<i64>() * 8;
         const MAX_ENCODED_SIZE_IN_BYTES: usize = STORAGE_SIZE_IN_BITS / BITS_PER_ENCODED_BYTE;
@@ -212,7 +220,7 @@ impl<A: AsRef<[u8]>> BinaryBuffer<A> {
         // negative (1).
 
         if self.is_empty() {
-            return incomplete_data_error("a VarInt", self.total_consumed());
+            return incomplete_data_error("a VarInt", self.offset());
         }
         let first_byte: u8 = self.peek_next_byte().unwrap();
         let no_more_bytes: bool = first_byte >= 0b1000_0000; // If the first bit is 1, we're done.
@@ -221,8 +229,10 @@ impl<A: AsRef<[u8]>> BinaryBuffer<A> {
         let mut magnitude = (first_byte & 0b0011_1111) as i64;
 
         if no_more_bytes {
-            self.consume(1);
-            return Ok(VarInt::new(magnitude * sign, is_negative, 1));
+            return Ok((
+                VarInt::new(magnitude * sign, is_negative, 1),
+                self.consume(1),
+            ));
         }
 
         let mut encoded_size_in_bytes = 1;
@@ -241,10 +251,7 @@ impl<A: AsRef<[u8]>> BinaryBuffer<A> {
         }
 
         if !terminated {
-            return incomplete_data_error(
-                "a VarInt",
-                self.total_consumed() + encoded_size_in_bytes,
-            );
+            return incomplete_data_error("a VarInt", self.offset() + encoded_size_in_bytes);
         }
 
         if encoded_size_in_bytes > MAX_ENCODED_SIZE_IN_BYTES {
@@ -253,20 +260,17 @@ impl<A: AsRef<[u8]>> BinaryBuffer<A> {
             ));
         }
 
-        self.consume(encoded_size_in_bytes);
-        Ok(VarInt::new(
-            magnitude * sign,
-            is_negative,
-            encoded_size_in_bytes,
+        Ok((
+            VarInt::new(magnitude * sign, is_negative, encoded_size_in_bytes),
+            self.consume(encoded_size_in_bytes),
         ))
     }
 
     /// Reads the first `length` bytes from the buffer as a `UInt` encoding primitive. If it is
-    /// successful, returns an `Ok(_)` containing its [DecodedUInt] representation and consumes the
-    /// source bytes.
+    /// successful, returns an `Ok(_)` containing its [DecodedUInt] representation.
     ///
     /// See: <https://amazon-ion.github.io/ion-docs/docs/binary.html#uint-and-int-fields>
-    pub fn read_uint(&mut self, length: usize) -> IonResult<DecodedUInt> {
+    pub fn read_uint(self, length: usize) -> ParseResult<'a, DecodedUInt> {
         if length <= mem::size_of::<u64>() {
             return self.read_small_uint(length);
         }
@@ -278,13 +282,15 @@ impl<A: AsRef<[u8]>> BinaryBuffer<A> {
     /// Reads the first `length` bytes from the buffer as a `UInt`. The caller must confirm that
     /// `length` is small enough to fit in a `u64`.
     #[inline]
-    fn read_small_uint(&mut self, length: usize) -> IonResult<DecodedUInt> {
+    fn read_small_uint(self, length: usize) -> ParseResult<'a, DecodedUInt> {
         let uint_bytes = self
             .peek_n_bytes(length)
-            .ok_or_else(|| incomplete_data_error_raw("a UInt", self.total_consumed()))?;
+            .ok_or_else(|| incomplete_data_error_raw("a UInt", self.offset()))?;
         let magnitude = DecodedUInt::small_uint_from_slice(uint_bytes);
-        self.consume(length);
-        Ok(DecodedUInt::new(UInt::U64(magnitude), length))
+        Ok((
+            DecodedUInt::new(UInt::U64(magnitude), length),
+            self.consume(length),
+        ))
     }
 
     /// Reads the first `length` bytes from the buffer as a `UInt`. If `length` is small enough
@@ -294,18 +300,20 @@ impl<A: AsRef<[u8]>> BinaryBuffer<A> {
     // This method performs allocations and its generated assembly is rather large. Isolating its
     // logic in a separate method that is never inlined keeps `read_uint` (its caller) small enough
     // to inline. This is important as `read_uint` is on the hot path for most Ion streams.
-    fn read_big_uint(&mut self, length: usize) -> IonResult<DecodedUInt> {
+    fn read_big_uint(self, length: usize) -> ParseResult<'a, DecodedUInt> {
         if length > MAX_UINT_SIZE_IN_BYTES {
             return Self::value_too_large("a Uint", length, MAX_UINT_SIZE_IN_BYTES);
         }
 
         let uint_bytes = self
             .peek_n_bytes(length)
-            .ok_or_else(|| incomplete_data_error_raw("a UInt", self.total_consumed()))?;
+            .ok_or_else(|| incomplete_data_error_raw("a UInt", self.offset()))?;
 
         let magnitude = BigUint::from_bytes_be(uint_bytes);
-        self.consume(length);
-        Ok(DecodedUInt::new(UInt::BigUInt(magnitude), length))
+        Ok((
+            DecodedUInt::new(UInt::BigUInt(magnitude), length),
+            self.consume(length),
+        ))
     }
 
     #[inline(never)]
@@ -322,18 +330,18 @@ impl<A: AsRef<[u8]>> BinaryBuffer<A> {
     /// source bytes.
     ///
     /// See: <https://amazon-ion.github.io/ion-docs/docs/binary.html#uint-and-int-fields>
-    pub fn read_int(&mut self, length: usize) -> IonResult<DecodedInt> {
+    pub fn read_int(self, length: usize) -> ParseResult<'a, DecodedInt> {
         if length == 0 {
-            return Ok(DecodedInt::new(Int::I64(0), false, 0));
+            return Ok((DecodedInt::new(Int::I64(0), false, 0), self.consume(0)));
         } else if length > MAX_INT_SIZE_IN_BYTES {
             return decoding_error(format!(
                 "Found a {length}-byte Int. Max supported size is {MAX_INT_SIZE_IN_BYTES} bytes."
             ));
         }
 
-        let int_bytes = self.peek_n_bytes(length).ok_or_else(|| {
-            incomplete_data_error_raw("an Int encoding primitive", self.total_consumed())
-        })?;
+        let int_bytes = self
+            .peek_n_bytes(length)
+            .ok_or_else(|| incomplete_data_error_raw("an Int encoding primitive", self.offset()))?;
 
         let mut is_negative: bool = false;
 
@@ -369,8 +377,73 @@ impl<A: AsRef<[u8]>> BinaryBuffer<A> {
 
             Int::BigInt(value)
         };
-        self.consume(length);
-        Ok(DecodedInt::new(value, is_negative, length))
+        Ok((
+            DecodedInt::new(value, is_negative, length),
+            self.consume(length),
+        ))
+    }
+
+    /// Attempts to decode an annotations wrapper at the beginning of the buffer and returning
+    /// its subfields in an [`AnnotationsWrapper`].
+    pub fn read_annotations_wrapper(
+        &self,
+        type_descriptor: TypeDescriptor,
+    ) -> ParseResult<'a, AnnotationsWrapper> {
+        // Consume the first byte; its contents are already in the `type_descriptor` parameter.
+        let input_after_type_descriptor = self.consume(1);
+
+        // Read the combined length of the annotations sequence and the value that follows it
+        let (annotations_and_value_length, input_after_combined_length) =
+            match type_descriptor.length_code {
+                length_codes::NULL => (0, input_after_type_descriptor),
+                length_codes::VAR_UINT => {
+                    let (var_uint, input) = input_after_type_descriptor.read_var_uint()?;
+                    (var_uint.value(), input)
+                }
+                length => (length as usize, input_after_type_descriptor),
+            };
+
+        // Read the length of the annotations sequence
+        let (annotations_length, input_after_annotations_length) =
+            input_after_combined_length.read_var_uint()?;
+
+        // Validate that the annotations sequence is not empty.
+        if annotations_length.value() == 0 {
+            return decoding_error("found an annotations wrapper with no annotations");
+        }
+
+        // Validate that the annotated value is not missing.
+        let expected_value_length = annotations_and_value_length
+            - annotations_length.size_in_bytes()
+            - annotations_length.value();
+
+        if expected_value_length == 0 {
+            return decoding_error("found an annotation wrapper with no value");
+        }
+
+        // Skip over the annotations sequence itself; the reader will return to it if/when the
+        // reader asks to iterate over those symbol IDs.
+        let final_input = input_after_annotations_length.consume(annotations_length.value());
+
+        // Here, `self` is the (immutable) buffer we started with. Comparing it with `input`
+        // gets us the before-and-after we need to calculate the size of the header.
+        let annotations_header_length = final_input.offset() - self.offset();
+        let annotations_header_length = u8::try_from(annotations_header_length).map_err(|_e| {
+            decoding_error_raw("found an annotations header greater than 255 bytes long")
+        })?;
+
+        let annotations_sequence_length =
+            u8::try_from(annotations_length.value()).map_err(|_e| {
+                decoding_error_raw("found an annotations sequence greater than 255 bytes long")
+            })?;
+
+        let wrapper = AnnotationsWrapper {
+            header_length: annotations_header_length,
+            sequence_length: annotations_sequence_length,
+            expected_value_length,
+        };
+
+        Ok((wrapper, final_input))
     }
 
     /// Reads a `NOP` encoding primitive from the buffer. If it is successful, returns an `Ok(_)`
@@ -381,25 +454,45 @@ impl<A: AsRef<[u8]>> BinaryBuffer<A> {
     // NOP padding is not widely used in Ion 1.0, in part because many writer implementations do not
     // expose the ability to write them. As such, this method has been marked `inline(never)` to
     // allow the hot path to be better optimized.
-    pub fn read_nop_pad(&mut self) -> IonResult<usize> {
+    pub fn read_nop_pad(self) -> ParseResult<'a, usize> {
         let type_descriptor = self.peek_type_descriptor()?;
         // Advance beyond the type descriptor
-        self.consume(1);
+        let remaining = self.consume(1);
         // If the type descriptor says we should skip more bytes, skip them.
-        let length = self.read_length(type_descriptor.length_code)?;
-        if self.remaining() < length.value() {
-            return incomplete_data_error("a NOP", self.total_consumed());
+        let (length, remaining) = remaining.read_length(type_descriptor.length_code)?;
+        if remaining.len() < length.value() {
+            return incomplete_data_error("a NOP", remaining.offset());
         }
-        self.consume(length.value());
-        Ok(1 + length.size_in_bytes() + length.value())
+        let remaining = remaining.consume(length.value());
+        let total_nop_pad_size = 1 + length.size_in_bytes() + length.value();
+        Ok((total_nop_pad_size, remaining))
+    }
+
+    /// Calls [`Self::read_nop_pad`] in a loop until the buffer is empty or a type descriptor
+    /// is encountered that is not a NOP.
+    #[inline(never)]
+    // NOP padding is not widely used in Ion 1.0. This method is annotated with `inline(never)`
+    // to avoid the compiler bloating other methods on the hot path with its rarely used
+    // instructions.
+    pub fn consume_nop_padding(self, mut type_descriptor: TypeDescriptor) -> ParseResult<'a, ()> {
+        let mut buffer = self;
+        // Skip over any number of NOP regions
+        while type_descriptor.is_nop() {
+            let (_, buffer_after_nop) = buffer.read_nop_pad()?;
+            buffer = buffer_after_nop;
+            if buffer.is_empty() {
+                break;
+            }
+            type_descriptor = buffer.peek_type_descriptor()?
+        }
+        Ok(((), buffer))
     }
 
     /// Interprets the length code in the provided [Header]; if necessary, will read more bytes
     /// from the buffer to interpret as the value's length. If it is successful, returns an `Ok(_)`
-    /// containing a [VarUInt] representation of the value's length and consumes any additional
-    /// bytes read. If no additional bytes were read, the returned `VarUInt`'s `size_in_bytes()`
-    /// method will return `0`.
-    pub fn read_value_length(&mut self, header: Header) -> IonResult<VarUInt> {
+    /// containing a [VarUInt] representation of the value's length. If no additional bytes were
+    /// read, the returned `VarUInt`'s `size_in_bytes()` method will return `0`.
+    pub fn read_value_length(self, header: Header) -> ParseResult<'a, VarUInt> {
         use IonType::*;
         // Some type-specific `length` field overrides
         let length_code = match header.ion_type {
@@ -416,7 +509,7 @@ impl<A: AsRef<[u8]>> BinaryBuffer<A> {
         };
 
         // Read the length, potentially consuming a VarUInt in the process.
-        let length = self.read_length(length_code)?;
+        let (length, remaining) = self.read_length(length_code)?;
 
         // After we get the length, perform some type-specific validation.
         match header.ion_type {
@@ -433,7 +526,7 @@ impl<A: AsRef<[u8]>> BinaryBuffer<A> {
             _ => {}
         };
 
-        Ok(length)
+        Ok((length, remaining))
     }
 
     /// Interprets a type descriptor's `L` nibble (length) in the way used by most Ion types.
@@ -444,86 +537,127 @@ impl<A: AsRef<[u8]>> BinaryBuffer<A> {
     ///   * anything else: the `L` represents the actual length.
     ///
     /// If successful, returns an `Ok(_)` that contains the [VarUInt] representation
-    /// of the value's length and consumes any additional bytes read.
-    pub fn read_length(&mut self, length_code: u8) -> IonResult<VarUInt> {
+    /// of the value's length.
+    pub fn read_length(self, length_code: u8) -> ParseResult<'a, VarUInt> {
         let length = match length_code {
             length_codes::NULL => VarUInt::new(0, 0),
-            length_codes::VAR_UINT => self.read_var_uint()?,
+            length_codes::VAR_UINT => return self.read_var_uint(),
             magnitude => VarUInt::new(magnitude as usize, 0),
         };
 
-        Ok(length)
+        // If we reach this point, the length was in the header byte and no additional bytes were
+        // consumed
+        Ok((length, self))
+    }
+
+    /// Reads a field ID and a value from the buffer.
+    pub(crate) fn peek_field(self) -> IonResult<Option<LazyRawValue<'a>>> {
+        self.peek_value(true)
+    }
+
+    /// Reads a value from the buffer.
+    pub(crate) fn peek_value_without_field_id(self) -> IonResult<Option<LazyRawValue<'a>>> {
+        self.peek_value(false)
+    }
+
+    /// Reads a value from the buffer. If `has_field` is true, it will read a field ID first.
+    // This method consumes leading NOP bytes, but leaves the header representation in the buffer.
+    // The resulting LazyRawValue's buffer slice always starts with the first non-NOP byte in the
+    // header, which can be either a field ID, an annotations wrapper, or a type descriptor.
+    fn peek_value(self, has_field: bool) -> IonResult<Option<LazyRawValue<'a>>> {
+        let initial_input = self;
+        if initial_input.is_empty() {
+            return Ok(None);
+        }
+        let (field_id, field_id_length, mut input) = if has_field {
+            let (field_id_var_uint, input_after_field_id) = initial_input.read_var_uint()?;
+            if input_after_field_id.is_empty() {
+                return incomplete_data_error(
+                    "found field name but no value",
+                    input_after_field_id.offset(),
+                );
+            }
+            let field_id_length = u8::try_from(field_id_var_uint.size_in_bytes())
+                .map_err(|_| decoding_error_raw("found a field id with length over 255 bytes"))?;
+            (
+                Some(field_id_var_uint.value()),
+                field_id_length,
+                input_after_field_id,
+            )
+        } else {
+            (None, 0, initial_input)
+        };
+
+        let mut annotations_header_length = 0u8;
+        let mut annotations_sequence_length = 0u8;
+        let mut expected_value_length = None;
+
+        let mut type_descriptor = input.peek_type_descriptor()?;
+        if type_descriptor.is_annotation_wrapper() {
+            let (wrapper, input_after_annotations) =
+                input.read_annotations_wrapper(type_descriptor)?;
+            annotations_header_length = wrapper.header_length;
+            annotations_sequence_length = wrapper.sequence_length;
+            expected_value_length = Some(wrapper.expected_value_length);
+            input = input_after_annotations;
+            type_descriptor = input.peek_type_descriptor()?;
+            if type_descriptor.is_annotation_wrapper() {
+                return decoding_error("found an annotations wrapper ");
+            }
+        } else if type_descriptor.is_nop() {
+            (_, input) = input.consume_nop_padding(type_descriptor)?;
+        }
+
+        let header = type_descriptor
+            .to_header()
+            .ok_or_else(|| decoding_error_raw("found a non-value in value position"))?;
+
+        let header_offset = input.offset();
+        let (length, _) = input.consume(1).read_value_length(header)?;
+        let length_length = u8::try_from(length.size_in_bytes()).map_err(|_e| {
+            decoding_error_raw("found a value with a header length field over 255 bytes long")
+        })?;
+        let value_length = length.value(); // ha
+        let total_length = field_id_length as usize
+            + annotations_header_length as usize
+            + 1 // Header byte
+            + length_length as usize
+            + value_length;
+
+        if let Some(expected_value_length) = expected_value_length {
+            let actual_value_length = 1 + length_length as usize + value_length;
+            if expected_value_length != actual_value_length {
+                println!("{} != {}", expected_value_length, actual_value_length);
+                return decoding_error(
+                    "value length did not match length declared by annotations wrapper",
+                );
+            }
+        }
+
+        let encoded_value = EncodedValue {
+            header,
+            field_id_length,
+            field_id,
+            annotations_header_length,
+            annotations_sequence_length,
+            header_offset,
+            length_length,
+            value_length,
+            total_length,
+        };
+        let lazy_value = LazyRawValue {
+            encoded_value,
+            input: initial_input,
+        };
+        Ok(Some(lazy_value))
     }
 }
 
-/// These methods are only available to `BinaryBuffer`s that wrap a `Vec<u8>`. That is: buffers
-/// that own a growable array into which more data can be appended.
-// TODO: Instead of pinning this to Vec<u8>, we should define a trait that allows any owned/growable
-//       byte buffer type to be used.
-impl BinaryBuffer<Vec<u8>> {
-    /// Moves any unread bytes to the front of the `Vec<u8>`, making room for more data at the tail.
-    /// This method should only be called when the bytes remaining in the buffer represent an
-    /// incomplete value; as such, the required `memcpy` should typically be quite small.
-    fn restack(&mut self) {
-        let remaining = self.remaining();
-        self.data.copy_within(self.start..self.end, 0);
-        self.start = 0;
-        self.end = remaining;
-        self.data.truncate(remaining);
-    }
-
-    /// Copies the provided bytes to end of the input buffer.
-    pub fn append_bytes(&mut self, bytes: &[u8]) {
-        self.restack();
-        self.data.extend_from_slice(bytes);
-        self.end += bytes.len();
-    }
-
-    /// Tries to read `length` bytes from `source`. Unlike [`append_bytes`](Self::append_bytes),
-    /// this method does not do any copying. A slice of the reader's buffer is handed to `source`
-    /// so it can be populated directly.
-    ///
-    /// If successful, returns an `Ok(_)` containing the number of bytes that were actually read.
-    pub fn read_from<R: Read>(&mut self, mut source: R, length: usize) -> IonResult<usize> {
-        self.restack();
-        // Make sure that there are `length` bytes in the `Vec` beyond `self.end`.
-        self.reserve_capacity(length);
-        // Get a mutable slice to the first `length` bytes starting at `self.end`.
-        let read_buffer = &mut self.data.as_mut_slice()[self.end..(self.end + length)];
-        // Use that slice as our input buffer to read from the source.
-        let bytes_read = source.read(read_buffer)?;
-        // Update `self.end` to reflect that we have more data available to read.
-        self.end += bytes_read;
-
-        Ok(bytes_read)
-    }
-
-    /// Pushes `0u8` onto the end of the `Vec<u8>` until there are `length` bytes available beyond
-    /// `self.end`. This block of zeroed out bytes can then be used as an input I/O buffer for calls
-    /// to `read_from`. Applications should only use `read_from` when the buffer has been depleted,
-    /// which means that calls to this method should usually be no-ops.
-    fn reserve_capacity(&mut self, length: usize) {
-        // TODO: More sophisticated logic to avoid potentially reallocating multiple times per call.
-        //       For now, it is unlikely that this would happen often.
-        let capacity = self.data.len() - self.end;
-        if capacity < length {
-            self.data.resize(self.data.len() + length - capacity, 0);
-        }
-    }
-}
-
-/// Constructs a [BinaryBuffer] from anything that can be viewed as a slice of bytes, including
-/// `&[u8]`, `Vec<u8>`, `Buf`, etc.
-impl<A: AsRef<[u8]>> From<A> for BinaryBuffer<A> {
-    fn from(data: A) -> Self {
-        let end = data.as_ref().len();
-        BinaryBuffer {
-            data,
-            start: 0,
-            end,
-            total_consumed: 0,
-        }
-    }
+/// Represents the data found in an Ion 1.0 annotations wrapper.
+pub struct AnnotationsWrapper {
+    pub header_length: u8,
+    pub sequence_length: u8,
+    pub expected_value_length: usize,
 }
 
 #[cfg(test)]
@@ -532,19 +666,19 @@ mod tests {
     use crate::IonError;
     use num_traits::Num;
 
-    fn input_test<I: AsRef<[u8]> + Into<BinaryBuffer<I>>>(input: I) {
-        let mut input = input.into();
+    fn input_test<A: AsRef<[u8]>>(input: A) {
+        let input = ImmutableBuffer::new(input.as_ref());
         // We can peek at the first byte...
         assert_eq!(input.peek_next_byte(), Some(b'f'));
         // ...without modifying the input. Looking at the next 3 bytes still includes 'f'.
         assert_eq!(input.peek_n_bytes(3), Some("foo".as_bytes()));
         // Advancing the cursor by 1...
-        input.consume(1);
+        let input = input.consume(1);
         // ...causes next_byte() to return 'o'.
         assert_eq!(input.peek_next_byte(), Some(b'o'));
-        input.consume(1);
+        let input = input.consume(1);
         assert_eq!(input.peek_next_byte(), Some(b'o'));
-        input.consume(1);
+        let input = input.consume(1);
         assert_eq!(input.peek_n_bytes(2), Some(" b".as_bytes()));
         assert_eq!(input.peek_n_bytes(6), Some(" bar b".as_bytes()));
     }
@@ -566,8 +700,8 @@ mod tests {
 
     #[test]
     fn read_var_uint() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b0111_1001, 0b0000_1111, 0b1000_0001]);
-        let var_uint = buffer.read_var_uint()?;
+        let buffer = ImmutableBuffer::new(&[0b0111_1001, 0b0000_1111, 0b1000_0001]);
+        let var_uint = buffer.read_var_uint()?.0;
         assert_eq!(3, var_uint.size_in_bytes());
         assert_eq!(1_984_385, var_uint.value());
         Ok(())
@@ -575,8 +709,8 @@ mod tests {
 
     #[test]
     fn read_var_uint_zero() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b1000_0000]);
-        let var_uint = buffer.read_var_uint()?;
+        let buffer = ImmutableBuffer::new(&[0b1000_0000]);
+        let var_uint = buffer.read_var_uint()?.0;
         assert_eq!(var_uint.size_in_bytes(), 1);
         assert_eq!(var_uint.value(), 0);
         Ok(())
@@ -584,8 +718,8 @@ mod tests {
 
     #[test]
     fn read_var_uint_two_bytes_max_value() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b0111_1111, 0b1111_1111]);
-        let var_uint = buffer.read_var_uint()?;
+        let buffer = ImmutableBuffer::new(&[0b0111_1111, 0b1111_1111]);
+        let var_uint = buffer.read_var_uint()?.0;
         assert_eq!(var_uint.size_in_bytes(), 2);
         assert_eq!(var_uint.value(), 16_383);
         Ok(())
@@ -593,7 +727,7 @@ mod tests {
 
     #[test]
     fn read_incomplete_var_uint() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b0111_1001, 0b0000_1111]);
+        let buffer = ImmutableBuffer::new(&[0b0111_1001, 0b0000_1111]);
         match buffer.read_var_uint() {
             Err(IonError::Incomplete { .. }) => Ok(()),
             other => panic!("expected IonError::Incomplete, but found: {other:?}"),
@@ -602,7 +736,7 @@ mod tests {
 
     #[test]
     fn read_var_uint_overflow_detection() {
-        let mut buffer = BinaryBuffer::new(&[
+        let buffer = ImmutableBuffer::new(&[
             0b0111_1111,
             0b0111_1111,
             0b0111_1111,
@@ -621,8 +755,8 @@ mod tests {
 
     #[test]
     fn read_var_int_zero() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b1000_0000]);
-        let var_int = buffer.read_var_int()?;
+        let buffer = ImmutableBuffer::new(&[0b1000_0000]);
+        let var_int = buffer.read_var_int()?.0;
         assert_eq!(var_int.size_in_bytes(), 1);
         assert_eq!(var_int.value(), 0);
         Ok(())
@@ -630,8 +764,8 @@ mod tests {
 
     #[test]
     fn read_negative_var_int() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b0111_1001, 0b0000_1111, 0b1000_0001]);
-        let var_int = buffer.read_var_int()?;
+        let buffer = ImmutableBuffer::new(&[0b0111_1001, 0b0000_1111, 0b1000_0001]);
+        let var_int = buffer.read_var_int()?.0;
         assert_eq!(var_int.size_in_bytes(), 3);
         assert_eq!(var_int.value(), -935_809);
         Ok(())
@@ -639,8 +773,8 @@ mod tests {
 
     #[test]
     fn read_positive_var_int() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b0011_1001, 0b0000_1111, 0b1000_0001]);
-        let var_int = buffer.read_var_int()?;
+        let buffer = ImmutableBuffer::new(&[0b0011_1001, 0b0000_1111, 0b1000_0001]);
+        let var_int = buffer.read_var_int()?.0;
         assert_eq!(var_int.size_in_bytes(), 3);
         assert_eq!(var_int.value(), 935_809);
         Ok(())
@@ -648,8 +782,8 @@ mod tests {
 
     #[test]
     fn read_var_int_two_byte_min() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b0111_1111, 0b1111_1111]);
-        let var_int = buffer.read_var_int()?;
+        let buffer = ImmutableBuffer::new(&[0b0111_1111, 0b1111_1111]);
+        let var_int = buffer.read_var_int()?.0;
         assert_eq!(var_int.size_in_bytes(), 2);
         assert_eq!(var_int.value(), -8_191);
         Ok(())
@@ -657,8 +791,8 @@ mod tests {
 
     #[test]
     fn read_var_int_two_byte_max() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b0011_1111, 0b1111_1111]);
-        let var_int = buffer.read_var_int()?;
+        let buffer = ImmutableBuffer::new(&[0b0011_1111, 0b1111_1111]);
+        let var_int = buffer.read_var_int()?.0;
         assert_eq!(var_int.size_in_bytes(), 2);
         assert_eq!(var_int.value(), 8_191);
         Ok(())
@@ -666,7 +800,7 @@ mod tests {
 
     #[test]
     fn read_var_int_overflow_detection() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[
+        let buffer = ImmutableBuffer::new(&[
             0b0111_1111,
             0b0111_1111,
             0b0111_1111,
@@ -686,8 +820,8 @@ mod tests {
 
     #[test]
     fn read_one_byte_uint() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b1000_0000]);
-        let var_int = buffer.read_uint(buffer.remaining())?;
+        let buffer = ImmutableBuffer::new(&[0b1000_0000]);
+        let var_int = buffer.read_uint(buffer.len())?.0;
         assert_eq!(var_int.size_in_bytes(), 1);
         assert_eq!(var_int.value(), &UInt::U64(128));
         Ok(())
@@ -695,8 +829,8 @@ mod tests {
 
     #[test]
     fn read_two_byte_uint() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b0111_1111, 0b1111_1111]);
-        let var_int = buffer.read_uint(buffer.remaining())?;
+        let buffer = ImmutableBuffer::new(&[0b0111_1111, 0b1111_1111]);
+        let var_int = buffer.read_uint(buffer.len())?.0;
         assert_eq!(var_int.size_in_bytes(), 2);
         assert_eq!(var_int.value(), &UInt::U64(32_767));
         Ok(())
@@ -704,8 +838,8 @@ mod tests {
 
     #[test]
     fn read_three_byte_uint() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b0011_1100, 0b1000_0111, 0b1000_0001]);
-        let var_int = buffer.read_uint(buffer.remaining())?;
+        let buffer = ImmutableBuffer::new(&[0b0011_1100, 0b1000_0111, 0b1000_0001]);
+        let var_int = buffer.read_uint(buffer.len())?.0;
         assert_eq!(var_int.size_in_bytes(), 3);
         assert_eq!(var_int.value(), &UInt::U64(3_966_849));
         Ok(())
@@ -714,8 +848,8 @@ mod tests {
     #[test]
     fn test_read_ten_byte_uint() -> IonResult<()> {
         let data = vec![0xFFu8; 10];
-        let mut buffer = BinaryBuffer::new(data);
-        let uint = buffer.read_uint(buffer.remaining())?;
+        let buffer = ImmutableBuffer::new(&data);
+        let uint = buffer.read_uint(buffer.len())?.0;
         assert_eq!(uint.size_in_bytes(), 10);
         assert_eq!(
             uint.value(),
@@ -728,16 +862,16 @@ mod tests {
     fn test_read_uint_too_large() {
         let mut buffer = Vec::with_capacity(MAX_UINT_SIZE_IN_BYTES + 1);
         buffer.resize(MAX_UINT_SIZE_IN_BYTES + 1, 1);
-        let mut buffer = BinaryBuffer::new(buffer);
+        let buffer = ImmutableBuffer::new(&buffer);
         let _uint = buffer
-            .read_uint(buffer.remaining())
+            .read_uint(buffer.len())
             .expect_err("This exceeded the configured max UInt size.");
     }
 
     #[test]
     fn read_int_negative_zero() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b1000_0000]); // Negative zero
-        let int = buffer.read_int(buffer.remaining())?;
+        let buffer = ImmutableBuffer::new(&[0b1000_0000]); // Negative zero
+        let int = buffer.read_int(buffer.len())?.0;
         assert_eq!(int.size_in_bytes(), 1);
         assert_eq!(int.value(), &Int::I64(0));
         assert!(int.is_negative_zero());
@@ -746,8 +880,8 @@ mod tests {
 
     #[test]
     fn read_int_positive_zero() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b0000_0000]); // Negative zero
-        let int = buffer.read_int(buffer.remaining())?;
+        let buffer = ImmutableBuffer::new(&[0b0000_0000]); // Negative zero
+        let int = buffer.read_int(buffer.len())?.0;
         assert_eq!(int.size_in_bytes(), 1);
         assert_eq!(int.value(), &Int::I64(0));
         assert!(!int.is_negative_zero());
@@ -756,8 +890,8 @@ mod tests {
 
     #[test]
     fn read_int_length_zero() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[]); // Negative zero
-        let int = buffer.read_int(buffer.remaining())?;
+        let buffer = ImmutableBuffer::new(&[]); // Negative zero
+        let int = buffer.read_int(buffer.len())?.0;
         assert_eq!(int.size_in_bytes(), 0);
         assert_eq!(int.value(), &Int::I64(0));
         assert!(!int.is_negative_zero());
@@ -766,8 +900,8 @@ mod tests {
 
     #[test]
     fn read_two_byte_negative_int() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b1111_1111, 0b1111_1111]);
-        let int = buffer.read_int(buffer.remaining())?;
+        let buffer = ImmutableBuffer::new(&[0b1111_1111, 0b1111_1111]);
+        let int = buffer.read_int(buffer.len())?.0;
         assert_eq!(int.size_in_bytes(), 2);
         assert_eq!(int.value(), &Int::I64(-32_767));
         Ok(())
@@ -775,8 +909,8 @@ mod tests {
 
     #[test]
     fn read_two_byte_positive_int() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b0111_1111, 0b1111_1111]);
-        let int = buffer.read_int(buffer.remaining())?;
+        let buffer = ImmutableBuffer::new(&[0b0111_1111, 0b1111_1111]);
+        let int = buffer.read_int(buffer.len())?.0;
         assert_eq!(int.size_in_bytes(), 2);
         assert_eq!(int.value(), &Int::I64(32_767));
         Ok(())
@@ -784,8 +918,8 @@ mod tests {
 
     #[test]
     fn read_three_byte_negative_int() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b1011_1100, 0b1000_0111, 0b1000_0001]);
-        let int = buffer.read_int(buffer.remaining())?;
+        let buffer = ImmutableBuffer::new(&[0b1011_1100, 0b1000_0111, 0b1000_0001]);
+        let int = buffer.read_int(buffer.len())?.0;
         assert_eq!(int.size_in_bytes(), 3);
         assert_eq!(int.value(), &Int::I64(-3_966_849));
         Ok(())
@@ -793,8 +927,8 @@ mod tests {
 
     #[test]
     fn read_three_byte_positive_int() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(&[0b0011_1100, 0b1000_0111, 0b1000_0001]);
-        let int = buffer.read_int(buffer.remaining())?;
+        let buffer = ImmutableBuffer::new(&[0b0011_1100, 0b1000_0111, 0b1000_0001]);
+        let int = buffer.read_int(buffer.len())?.0;
         assert_eq!(int.size_in_bytes(), 3);
         assert_eq!(int.value(), &Int::I64(3_966_849));
         Ok(())
@@ -802,23 +936,11 @@ mod tests {
 
     #[test]
     fn read_int_overflow() -> IonResult<()> {
-        let mut buffer = BinaryBuffer::new(vec![1; MAX_INT_SIZE_IN_BYTES + 1]); // Negative zero
+        let data = vec![1; MAX_INT_SIZE_IN_BYTES + 1];
+        let buffer = ImmutableBuffer::new(&data); // Negative zero
         buffer
-            .read_int(buffer.remaining())
+            .read_int(buffer.len())
             .expect_err("This exceeded the configured max Int size.");
-        Ok(())
-    }
-
-    #[test]
-    fn validate_read_from_size() -> IonResult<()> {
-        // This test validates that the size of data we wish to read is actually honored by
-        // read_from. A bug existed where the sub-slice of the buffer was calculated incorrectly,
-        // leading to the potential for failed reads, or increasingly smaller reads.
-        let mut buffer = BinaryBuffer::new(vec![0; 10]);
-        let new_data: &[u8] = &[0; 11];
-        let bytes_read = buffer.read_from(new_data, 11)?;
-        assert_eq!(bytes_read, 11);
-
         Ok(())
     }
 }

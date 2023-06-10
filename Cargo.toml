@@ -16,7 +16,7 @@ exclude = [
   "**/ion-tests/iontestdata/**",
   "*.pdf"
 ]
-version = "0.17.0"
+version = "0.18.1"
 edition = "2021"
 # We need at least 1.65 for GATs
 # https://blog.rust-lang.org/2022/11/03/Rust-1.65.0.html
@@ -34,10 +34,15 @@ ion-hash = ["digest"]
 # Feature for indicating particularly bleeding edge APIs or functionality in the library.
 # These are not guaranteed any sort of API stability and may also have non-standard
 # Ion behavior (e.g., draft Ion 1.1 capabilities).
-experimental = ["experimental-streaming", "experimental-ion11"]
+experimental = ["experimental-streaming", "experimental-lazy-reader", "experimental-ion11"]
 
 # Experimental streaming APIs
 experimental-streaming = []
+
+# A reader API that parks on a top-level value and yields 'lazy' handles to the data
+# contained therein. These lazy handles can be read multiple times, allowing for
+# an inexpensive form of 'rewind' functionality.
+experimental-lazy-reader = []
 
 # Experimental draft Ion 1.1 APIs/functionality
 experimental-ion11 = ["rpds"]
