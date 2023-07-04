@@ -1,10 +1,11 @@
-use crate::element::writer::TextKind;
+use crate::ion_writer::IonWriter;
 use crate::raw_symbol_token_ref::{AsRawSymbolTokenRef, RawSymbolTokenRef};
 use crate::result::IonResult;
 use crate::text::raw_text_writer::RawTextWriter;
+use crate::text::raw_text_writer::RawTextWriterBuilder;
 use crate::types::{Decimal, Timestamp};
-use crate::writer::IonWriter;
-use crate::{Int, IonType, RawTextWriterBuilder, SymbolTable};
+use crate::TextKind;
+use crate::{Int, IonType, SymbolTable};
 use delegate::delegate;
 use std::io::Write;
 
@@ -188,9 +189,8 @@ impl<W: Write> IonWriter for TextWriter<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reader::ReaderBuilder;
-    use crate::IonReader;
-    use crate::StreamItem::Value;
+    use crate::ion_reader::IonReader;
+    use crate::reader::{ReaderBuilder, StreamItem::Value};
 
     #[test]
     fn resolve_symbol_ids() -> IonResult<()> {

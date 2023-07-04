@@ -1,11 +1,11 @@
 use crate::element::builders::StructBuilder;
 use crate::element::{Annotations, Element, IntoAnnotatedElement, Value};
+use crate::ion_writer::IonWriter;
 use crate::raw_symbol_token_ref::AsRawSymbolTokenRef;
-use crate::result::illegal_operation;
+use crate::result::IonFailure;
 use crate::types::Bytes;
 use crate::{
-    Decimal, Int, IonResult, IonType, IonWriter, RawSymbolTokenRef, Str, Symbol, SymbolTable,
-    Timestamp,
+    Decimal, Int, IonResult, IonType, RawSymbolTokenRef, Str, Symbol, SymbolTable, Timestamp,
 };
 
 // Represents a level into which the writer has stepped.
@@ -85,7 +85,7 @@ where
 
     fn pop_container(&mut self) -> IonResult<ContainerContext> {
         if self.containers.len() <= 1 {
-            return illegal_operation("cannot step out of the top level");
+            return IonResult::illegal_operation("cannot step out of the top level");
         }
         // `self.containers` is never empty; it always has at least the top level.
         Ok(self.containers.pop().unwrap())
@@ -111,7 +111,9 @@ where
                 if let Some(field_name) = field_name {
                     fields.push((field_name, element));
                 } else {
-                    return illegal_operation("Values inside a struct must have a field name.");
+                    return IonResult::illegal_operation(
+                        "Values inside a struct must have a field name.",
+                    );
                 }
             }
         };
@@ -131,7 +133,7 @@ where
                         .cloned()
                         .unwrap_or(Symbol::unknown_text()))
                 } else {
-                    illegal_operation(format!("Symbol ID ${symbol_id} is undefined."))
+                    IonResult::illegal_operation(format!("Symbol ID ${symbol_id} is undefined."))
                 }
             }
             RawSymbolTokenRef::Text(txt) => Ok(Symbol::owned(txt)),
@@ -185,7 +187,7 @@ where
     }
 
     fn write_i64(&mut self, value: i64) -> IonResult<()> {
-        self.write_scalar(Value::Int(Int::I64(value)))
+        self.write_scalar(Value::Int(value.into()))
     }
 
     fn write_int(&mut self, value: &Int) -> IonResult<()> {
@@ -230,7 +232,9 @@ where
             IonType::Struct => Container::Struct(vec![]),
             IonType::List => Container::List(vec![]),
             IonType::SExp => Container::SExpression(vec![]),
-            _ => return illegal_operation(format!("Cannot step into a(n) {ion_type:?}")),
+            _ => {
+                return IonResult::illegal_operation(format!("Cannot step into a(n) {ion_type:?}"))
+            }
         };
         self.push_container(container)
     }
@@ -265,7 +269,9 @@ where
             container,
         } = self.pop_container()?;
         let value = match container {
-            Container::TopLevel => return illegal_operation("cannot step out of the top level"),
+            Container::TopLevel => {
+                return IonResult::illegal_operation("cannot step out of the top level")
+            }
             Container::SExpression(seq) => Value::SExp(seq.into()),
             Container::List(seq) => Value::List(seq.into()),
             Container::Struct(fields) => {
@@ -299,9 +305,9 @@ mod tests {
     use crate::element::builders::{SequenceBuilder, StructBuilder};
     use crate::result::IonResult;
 
+    use crate::ion_writer::IonWriter;
     use crate::types::{Bytes, Timestamp};
-    use crate::writer::IonWriter;
-    use crate::{Decimal, Int, IonType, Symbol};
+    use crate::{Decimal, IonType, Symbol};
 
     #[track_caller]
     fn writer_test_with_assertion<F, E, A>(mut commands: F, expected: Vec<E>, mut assertion: A)
@@ -384,7 +390,7 @@ mod tests {
 
     #[test]
     fn write_i64() {
-        writer_scalar_test(|w| w.write_i64(7), Value::Int(Int::I64(7)));
+        writer_scalar_test(|w| w.write_i64(7), Value::Int(7i64.into()));
     }
 
     #[test]
@@ -404,7 +410,7 @@ mod tests {
                 w.set_annotations(["foo", "bar", "baz quux"]);
                 w.write_i64(7)
             },
-            Value::Int(Int::I64(7)).with_annotations(["foo", "bar", "baz quux"]),
+            Value::Int(7i64.into()).with_annotations(["foo", "bar", "baz quux"]),
         );
     }
 

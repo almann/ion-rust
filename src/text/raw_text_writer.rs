@@ -3,12 +3,12 @@ use std::io::{BufWriter, Write};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, FixedOffset};
 
-use crate::element::writer::TextKind;
+use crate::ion_writer::IonWriter;
 use crate::raw_symbol_token_ref::{AsRawSymbolTokenRef, RawSymbolTokenRef};
-use crate::result::{illegal_operation, IonResult};
+use crate::result::{IonFailure, IonResult};
 use crate::text::text_formatter::STRING_ESCAPE_CODES;
 use crate::types::{ContainerType, Decimal, Timestamp};
-use crate::writer::IonWriter;
+use crate::TextKind;
 use crate::{Int, IonType, RawSymbolToken};
 
 pub struct RawTextWriterBuilder {
@@ -350,7 +350,7 @@ impl<W: Write> RawTextWriter<W> {
                 self.whitespace_config.space_after_field_name
             )?;
         } else if self.is_in_struct() {
-            return illegal_operation("Values inside a struct must have a field name.");
+            return IonResult::illegal_operation("Values inside a struct must have a field name.");
         }
 
         if !self.annotations.is_empty() {
@@ -662,7 +662,9 @@ impl<W: Write> IonWriter for RawTextWriter<W> {
                 write!(self.output, "(")?;
                 ContainerType::SExpression
             }
-            _ => return illegal_operation(format!("Cannot step into a(n) {ion_type:?}")),
+            _ => {
+                return IonResult::illegal_operation(format!("Cannot step into a(n) {ion_type:?}"))
+            }
         };
         self.containers.push(EncodingLevel {
             container_type,
@@ -704,7 +706,7 @@ impl<W: Write> IonWriter for RawTextWriter<W> {
             Struct => "}",
             List => "]",
             SExpression => ")",
-            TopLevel => return illegal_operation("cannot step out of the top level"),
+            TopLevel => return IonResult::illegal_operation("cannot step out of the top level"),
         };
         // Wait to pop() the encoding level until after we've confirmed it wasn't TopLevel
         let popped_encoding_level = self.containers.pop().unwrap();
@@ -749,10 +751,10 @@ mod tests {
     use bigdecimal::BigDecimal;
     use chrono::{FixedOffset, NaiveDate, TimeZone};
 
+    use crate::ion_writer::IonWriter;
     use crate::result::IonResult;
     use crate::text::raw_text_writer::{RawTextWriter, RawTextWriterBuilder};
     use crate::types::Timestamp;
-    use crate::writer::IonWriter;
     use crate::IonType;
 
     fn writer_test_with_builder<F>(builder: RawTextWriterBuilder, mut commands: F, expected: &str)

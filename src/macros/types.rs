@@ -6,7 +6,7 @@
 
 use crate::macros::constants::syntax::*;
 use crate::macros::ParseStr;
-use crate::result::illegal_operation;
+use crate::result::IonFailure;
 use crate::{IonResult, IonType};
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
@@ -56,7 +56,7 @@ impl ParseStr for PrimitiveType {
             VAR_INT => Ok(VarInt),
             VAR_STR => Ok(VarStr),
             VAR_SYM => Ok(VarSym),
-            _ => illegal_operation(format!("'{}' is not a tagless type", text)),
+            _ => IonResult::illegal_operation(format!("'{}' is not a tagless type", text)),
         }
     }
 }
@@ -119,7 +119,7 @@ impl ParseStr for UnionType {
             TEXT => Ok(Text),
             LOB => Ok(Lob),
             SEQUENCE => Ok(Sequence),
-            _ => illegal_operation(format!("'{}' is not a union type", text)),
+            _ => IonResult::illegal_operation(format!("'{}' is not a union type", text)),
         }
     }
 }
@@ -163,7 +163,7 @@ impl ParseStr for Cardinality {
             ZERO_OR_ONE_SIGIL => Ok(ZeroOrOne),
             ZERO_OR_MORE_SIGIL => Ok(ZeroOrMore),
             ONE_OR_MORE_SIGIL => Ok(OneOrMore),
-            _ => illegal_operation(format!("'{}' is not a cardinality", text)),
+            _ => IonResult::illegal_operation(format!("'{}' is not a cardinality", text)),
         }
     }
 }
@@ -235,13 +235,13 @@ impl ParamType {
                 // ...
             }
             (Normal, a_card, s_card) => {
-                return illegal_operation(format!(
+                return IonResult::illegal_operation(format!(
                     "Mismatched cardinalities for param type: {}{}",
                     a_card, s_card
                 ))
             }
             (Rest, a_card, s_card) => {
-                return illegal_operation(format!(
+                return IonResult::illegal_operation(format!(
                     "Rest parameter must be * cardinality: {}{}",
                     a_card, s_card
                 ))

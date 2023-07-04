@@ -9,11 +9,12 @@ use num_traits::Zero;
 use crate::binary::constants::v1_0::IVM;
 use crate::binary::uint::DecodedUInt;
 use crate::binary::var_uint::VarUInt;
+use crate::ion_writer::IonWriter;
 use crate::raw_symbol_token_ref::{AsRawSymbolTokenRef, RawSymbolTokenRef};
-use crate::result::{illegal_operation, IonResult};
-use crate::types::{ContainerType, Decimal, SymbolId, Timestamp};
-use crate::writer::IonWriter;
-use crate::{Int, IonType};
+use crate::result::{IonFailure, IonResult};
+use crate::types::integer::IntData;
+use crate::types::{ContainerType, Decimal, Int, SymbolId, Timestamp};
+use crate::IonType;
 
 use super::decimal::DecimalBinaryEncoder;
 use super::timestamp::TimestampBinaryEncoder;
@@ -428,9 +429,9 @@ impl<W: Write> RawBinaryWriter<W> {
     fn expect_field_id(&self) -> IonResult<usize> {
         match self.field_id {
             Some(field_id) => Ok(field_id),
-            None => {
-                illegal_operation("`set_field_id()` must be called before each field in a struct.")
-            }
+            None => IonResult::illegal_operation(
+                "`set_field_id()` must be called before each field in a struct.",
+            ),
         }
     }
 
@@ -516,12 +517,12 @@ impl<W: Write> IonWriter for RawBinaryWriter<W> {
 
     fn write_ion_version_marker(&mut self, major: u8, minor: u8) -> IonResult<()> {
         if self.depth() > 0 {
-            return illegal_operation("can only write an IVM at the top level");
+            return IonResult::illegal_operation("can only write an IVM at the top level");
         }
         if major == 1 && minor == 0 {
             return Ok(self.out.write_all(&IVM)?);
         }
-        illegal_operation("Only Ion 1.0 is supported.")
+        IonResult::illegal_operation("Only Ion 1.0 is supported.")
     }
 
     fn supports_text_symbol_tokens(&self) -> bool {
@@ -600,9 +601,9 @@ impl<W: Write> IonWriter for RawBinaryWriter<W> {
     /// Writes an Ion integer with the specified value.
     fn write_int(&mut self, value: &Int) -> IonResult<()> {
         // If the `value` is an `i64`, use `write_i64` and return.
-        let value = match value {
-            Int::I64(i) => return self.write_i64(*i),
-            Int::BigInt(i) => i,
+        let value = match &value.data {
+            IntData::I64(i) => return self.write_i64(*i),
+            IntData::BigInt(i) => i,
         };
 
         // From here on, `value` is a `BigInt`.
@@ -683,7 +684,7 @@ impl<W: Write> IonWriter for RawBinaryWriter<W> {
         match value.as_raw_symbol_token_ref() {
             RawSymbolTokenRef::SymbolId(sid) => self.write_symbol_id(sid),
             RawSymbolTokenRef::Text(_text) => {
-                illegal_operation("The RawBinaryWriter cannot write text symbols.")
+                IonResult::illegal_operation("The RawBinaryWriter cannot write text symbols.")
             }
         }
     }
@@ -731,7 +732,7 @@ impl<W: Write> IonWriter for RawBinaryWriter<W> {
             List => ContainerType::List,
             SExp => ContainerType::SExpression,
             Struct => ContainerType::Struct,
-            _ => return illegal_operation("Cannot step into a scalar Ion type."),
+            _ => return IonResult::illegal_operation("Cannot step into a scalar Ion type."),
         };
 
         // If this is a field in a struct, encode the field ID at the end of the last IO range.
@@ -799,7 +800,7 @@ impl<W: Write> IonWriter for RawBinaryWriter<W> {
     /// Ends the current container. If the writer is at the top level, `step_out` will return an Err.
     fn step_out(&mut self) -> IonResult<()> {
         if self.levels.len() <= 1 {
-            return illegal_operation(
+            return IonResult::illegal_operation(
                 "Cannot call step_out() unless the writer is positioned within a container.",
             );
         }
@@ -814,7 +815,7 @@ impl<W: Write> IonWriter for RawBinaryWriter<W> {
             List => 0xB0,
             SExpression => 0xC0,
             Struct => 0xD0,
-            _ => return illegal_operation("Cannot step into a scalar Ion type."),
+            _ => return IonResult::illegal_operation("Cannot step into a scalar Ion type."),
         };
 
         // Encode the type descriptor byte, and optional length
@@ -860,7 +861,7 @@ impl<W: Write> IonWriter for RawBinaryWriter<W> {
     /// the top level.
     fn flush(&mut self) -> IonResult<()> {
         if self.depth() > 0 {
-            return illegal_operation(
+            return IonResult::illegal_operation(
                 "Cannot call flush() while the writer is positioned within a container.",
             );
         }
@@ -903,15 +904,13 @@ impl<W: Write> IonWriter for RawBinaryWriter<W> {
 mod writer_tests {
     use std::fmt::Debug;
 
-    use crate::StreamItem;
-
     use rstest::*;
 
     use super::*;
+    use crate::ion_reader::IonReader;
     use crate::raw_symbol_token::{local_sid_token, RawSymbolToken};
-    use crate::reader::{Reader, ReaderBuilder};
+    use crate::reader::{Reader, ReaderBuilder, StreamItem};
     use crate::types::{Blob, Clob, Symbol};
-    use crate::IonReader;
     use num_bigint::BigInt;
     use num_traits::Float;
     use std::convert::TryInto;
@@ -1151,12 +1150,7 @@ mod writer_tests {
     }
 
     fn expect_big_integer(reader: &mut TestReader, value: &BigInt) {
-        expect_scalar(
-            reader,
-            IonType::Int,
-            |r| r.read_int(),
-            Int::BigInt(value.clone()),
-        );
+        expect_scalar(reader, IonType::Int, |r| r.read_int(), value.clone().into());
     }
 
     fn expect_float(reader: &mut TestReader, value: f64) {
@@ -1243,11 +1237,11 @@ mod writer_tests {
         let very_big_negative = -very_big_positive.clone();
         binary_writer_test(
             |writer| {
-                writer.write_int(&Int::BigInt(BigInt::zero()))?;
-                writer.write_int(&Int::BigInt(big_positive.clone()))?;
-                writer.write_int(&Int::BigInt(very_big_positive.clone()))?;
-                writer.write_int(&Int::BigInt(big_negative.clone()))?;
-                writer.write_int(&Int::BigInt(very_big_negative.clone()))?;
+                writer.write_int(&(BigInt::zero().into()))?;
+                writer.write_int(&big_positive.clone().into())?;
+                writer.write_int(&very_big_positive.clone().into())?;
+                writer.write_int(&big_negative.clone().into())?;
+                writer.write_int(&very_big_negative.clone().into())?;
                 Ok(())
             },
             |reader| {

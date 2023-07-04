@@ -1,8 +1,10 @@
 use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 
-use crate::result::{illegal_operation, IonError};
+use crate::result::{IonError, IonFailure};
+use crate::types::integer::UIntData;
 use crate::types::UInt;
+use crate::IonResult;
 use std::convert::TryFrom;
 use std::fmt::{Display, Formatter};
 use std::ops::{MulAssign, Neg};
@@ -15,6 +17,67 @@ pub enum Sign {
     Positive,
 }
 
+/// A simple wrapper type around a [`UInt`]. Users are not expected to construct
+/// instances of `Magnitude` directly; it is provided for conversion ergonomics.
+///
+/// Signed integer types cannot implement `Into<UInt>`. Instead, they implement
+/// `TryInto<UInt>` and report an error if the input integer is negative.
+///
+/// Signed integers can infallibly implement `Into<Magnitude>` by using their
+/// absolute value.
+pub struct Magnitude(UInt);
+
+impl Magnitude {
+    fn new<I: Into<UInt>>(value: I) -> Self {
+        Magnitude(value.into())
+    }
+}
+
+impl From<UInt> for Magnitude {
+    fn from(value: UInt) -> Self {
+        Magnitude(value)
+    }
+}
+
+impl From<Magnitude> for UInt {
+    fn from(value: Magnitude) -> Self {
+        value.0
+    }
+}
+
+impl From<BigUint> for Magnitude {
+    fn from(value: BigUint) -> Self {
+        let uint: UInt = value.into();
+        Magnitude(uint)
+    }
+}
+
+macro_rules! impl_magnitude_from_small_unsigned_int_types {
+    ($($t:ty),*) => ($(
+        impl From<$t> for Magnitude {
+            fn from(value: $t) -> Magnitude {
+                let uint: UInt = value.into();
+                Magnitude(uint)
+            }
+        }
+    )*)
+}
+
+impl_magnitude_from_small_unsigned_int_types!(u8, u16, u32, u64, u128, usize);
+
+macro_rules! impl_magnitude_from_small_signed_int_types {
+    ($($t:ty),*) => ($(
+        impl From<$t> for Magnitude {
+            fn from(value: $t) -> Magnitude {
+                let uint: UInt = (value.unsigned_abs() as u64).into();
+                Magnitude(uint)
+            }
+        }
+    )*)
+}
+
+impl_magnitude_from_small_signed_int_types!(i8, i16, i32, i64, isize);
+
 /// A signed integer that can be used as the coefficient of a Decimal value. This type does not
 /// consider `0` and `-0` to be equal and supports magnitudes of arbitrary size.
 // These trait derivations rely closely on the manual implementations of PartialEq and Ord on
@@ -26,8 +89,9 @@ pub struct Coefficient {
 }
 
 impl Coefficient {
-    pub(crate) fn new<I: Into<UInt>>(sign: Sign, magnitude: I) -> Self {
-        let magnitude = magnitude.into();
+    pub(crate) fn new<I: Into<Magnitude>>(sign: Sign, magnitude: I) -> Self {
+        let magnitude: Magnitude = magnitude.into();
+        let magnitude: UInt = magnitude.into();
         Coefficient { sign, magnitude }
     }
 
@@ -48,33 +112,33 @@ impl Coefficient {
     pub(crate) fn negative_zero() -> Self {
         Coefficient {
             sign: Sign::Negative,
-            magnitude: UInt::U64(0),
+            magnitude: 0u64.into(),
         }
     }
 
     /// Returns true if the Coefficient represents positive zero.
     pub(crate) fn is_negative_zero(&self) -> bool {
-        match (self.sign, &self.magnitude) {
-            (Sign::Negative, UInt::U64(0)) => true,
-            (Sign::Negative, UInt::BigUInt(b)) if b.is_zero() => true,
+        match (self.sign, &self.magnitude.data) {
+            (Sign::Negative, UIntData::U64(0)) => true,
+            (Sign::Negative, UIntData::BigUInt(b)) if b.is_zero() => true,
             _ => false,
         }
     }
 
     /// Returns true if the Coefficient represents positive zero.
     pub(crate) fn is_positive_zero(&self) -> bool {
-        match (self.sign, &self.magnitude) {
-            (Sign::Positive, UInt::U64(0)) => true,
-            (Sign::Positive, UInt::BigUInt(b)) if b.is_zero() => true,
+        match (self.sign, &self.magnitude.data) {
+            (Sign::Positive, UIntData::U64(0)) => true,
+            (Sign::Positive, UIntData::BigUInt(b)) if b.is_zero() => true,
             _ => false,
         }
     }
 
     /// Returns true if the Coefficient represents a zero of any sign.
     pub(crate) fn is_zero(&self) -> bool {
-        match (self.sign, &self.magnitude) {
-            (_, UInt::U64(0)) => true,
-            (_, UInt::BigUInt(b)) if b.is_zero() => true,
+        match (self.sign, &self.magnitude.data) {
+            (_, UIntData::U64(0)) => true,
+            (_, UIntData::BigUInt(b)) if b.is_zero() => true,
             _ => false,
         }
     }
@@ -82,15 +146,15 @@ impl Coefficient {
     /// If the value can fit in an i64, return it as such. This is useful for
     /// inline representations.
     pub(crate) fn as_i64(&self) -> Option<i64> {
-        match self.magnitude {
-            UInt::U64(unsigned) => match i64::try_from(unsigned) {
+        match &self.magnitude.data {
+            UIntData::U64(unsigned) => match i64::try_from(*unsigned) {
                 Ok(signed) => match self.sign {
                     Sign::Negative => Some(signed.neg()), // cannot overflow (never `MIN`)
                     Sign::Positive => Some(signed),
                 },
                 Err(_) => None,
             },
-            UInt::BigUInt(_) => None,
+            UIntData::BigUInt(_) => None,
         }
     }
 }
@@ -113,7 +177,7 @@ macro_rules! impl_coefficient_from_signed_int_types {
         impl From<$t> for Coefficient {
             fn from(value: $t) -> Coefficient {
                 let sign = if value < <$t>::zero() { Sign::Negative } else { Sign::Positive };
-                Coefficient::new(sign, value)
+                Coefficient::new(sign, value.unsigned_abs())
             }
         }
     )*)
@@ -128,11 +192,11 @@ impl TryFrom<Coefficient> for BigInt {
     /// converted is a negative zero, which BigInt cannot represent. Returns Ok otherwise.
     fn try_from(value: Coefficient) -> Result<Self, Self::Error> {
         if value.is_negative_zero() {
-            illegal_operation("Cannot convert negative zero Decimal to BigInt")?;
+            IonResult::illegal_operation("Cannot convert negative zero Decimal to BigInt")?;
         }
-        let mut big_int: BigInt = match value.magnitude {
-            UInt::U64(m) => m.into(),
-            UInt::BigUInt(m) => m.into(),
+        let mut big_int: BigInt = match value.magnitude.data {
+            UIntData::U64(m) => m.into(),
+            UIntData::BigUInt(m) => m.into(),
         };
         if value.sign == Sign::Negative {
             big_int.mul_assign(-1);
@@ -153,7 +217,7 @@ impl TryFrom<BigInt> for Coefficient {
                 if magnitude.is_zero() {
                     Sign::Positive
                 } else {
-                    return illegal_operation(
+                    return IonResult::illegal_operation(
                         "Cannot convert sign-less non-zero BigInt to Decimal.",
                     );
                 }
@@ -169,9 +233,9 @@ impl Display for Coefficient {
             Sign::Positive => {}
             Sign::Negative => write!(f, "-")?,
         };
-        match &self.magnitude {
-            UInt::U64(m) => write!(f, "{}", *m),
-            UInt::BigUInt(m) => write!(f, "{m}"),
+        match &self.magnitude.data {
+            UIntData::U64(m) => write!(f, "{}", *m),
+            UIntData::BigUInt(m) => write!(f, "{m}"),
         }
     }
 }

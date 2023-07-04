@@ -19,7 +19,7 @@
 //! [1]: https://en.wikipedia.org/wiki/Persistent_data_structure
 
 use crate::macros::ident::{Addressable, MacroBind, MacroId, ModuleId, Name};
-use crate::result::illegal_operation;
+use crate::result::IonFailure;
 use crate::IonResult;
 use rpds::{HashTrieMap, Vector};
 use std::fmt::Debug;
@@ -173,9 +173,10 @@ impl<M: MacroVal> ModuleMappable<M> for ModuleMap<M> {
             None => Ok(ModuleMap {
                 modules: self.modules.insert(name, module),
             }),
-            Some(module) => {
-                illegal_operation(format!("Duplicate module name {} for {:?}", name, module))
-            }
+            Some(module) => IonResult::illegal_operation(format!(
+                "Duplicate module name {} for {:?}",
+                name, module
+            )),
         }
     }
 
@@ -380,7 +381,7 @@ impl<M: MacroVal> Module<M> {
     fn with_handle(&self, next_handle: MacroHandle, next_macro_val: M) -> IonResult<Module<M>> {
         let (next_index_entry_opt, next_index) = self.map.with_macro(next_handle, next_macro_val);
         if matches!(&next_index_entry_opt, Some(MacroEntry::Ambiguous(_))) {
-            return illegal_operation(format!(
+            return IonResult::illegal_operation(format!(
                 "Duplicate macro named in module: {:?}",
                 next_index_entry_opt
             ));

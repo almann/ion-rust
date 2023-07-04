@@ -2,9 +2,9 @@
 
 //! Provides support Ion 1.1 macros (not to be confused with Rust macros).
 
-use crate::result::decoding_error_raw;
+use crate::result::IonFailure;
 use crate::tokens::{Instruction, TokenStream};
-use crate::IonResult;
+use crate::{IonError, IonResult};
 
 pub(crate) mod constants;
 
@@ -57,7 +57,7 @@ where
             .has_no_annotations()?
             .symbol()?
             .text()
-            .ok_or_else(|| decoding_error_raw("No text symbol"))?;
+            .ok_or_else(|| IonError::decoding_error("No text symbol"))?;
         T::parse_str(text)
     }
 }

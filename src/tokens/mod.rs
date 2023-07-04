@@ -9,7 +9,7 @@
 //! with values without fully materializing the tree.
 
 use crate::element::{Annotations, Bytes, Value};
-use crate::result::{decoding_error, illegal_operation};
+use crate::result::IonFailure;
 use crate::text::text_formatter::IonValueFormatter;
 use crate::thunk::{Thunk, ThunkState};
 use crate::{Decimal, Int, IonError, IonResult, IonType, Str, Symbol, Timestamp};
@@ -66,7 +66,7 @@ impl TryFrom<IonType> for ScalarType {
             IonType::Symbol => Ok(Symbol),
             IonType::Blob => Ok(Blob),
             IonType::Clob => Ok(Clob),
-            _ => illegal_operation(format!("{} type is not a scalar", value)),
+            _ => IonResult::illegal_operation(format!("{} type is not a scalar", value)),
         }
     }
 }
@@ -88,7 +88,7 @@ impl TryFrom<IonType> for ContainerType {
             IonType::SExp => Ok(SExp),
             IonType::List => Ok(List),
             IonType::Struct => Ok(Struct),
-            _ => illegal_operation(format!("{} type is not a container", value)),
+            _ => IonResult::illegal_operation(format!("{} type is not a container", value)),
         }
     }
 }
@@ -139,7 +139,7 @@ impl TryFrom<Value> for ScalarValue {
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         use ScalarValue::*;
         match value {
-            Value::Null(_) => illegal_operation("Null is not a scalar value"),
+            Value::Null(_) => IonResult::illegal_operation("Null is not a scalar value"),
             Value::Bool(bool) => Ok(Bool(bool)),
             Value::Int(int) => Ok(Int(int)),
             Value::Float(float) => Ok(Float(float)),
@@ -149,9 +149,9 @@ impl TryFrom<Value> for ScalarValue {
             Value::Symbol(symbol) => Ok(Symbol(symbol)),
             Value::Blob(bytes) => Ok(Blob(bytes)),
             Value::Clob(bytes) => Ok(Clob(bytes)),
-            Value::SExp(_) => illegal_operation("SExp is not a scalar value"),
-            Value::List(_) => illegal_operation("List is not a scalar value"),
-            Value::Struct(_) => illegal_operation("Struct is not a scalar value"),
+            Value::SExp(_) => IonResult::illegal_operation("SExp is not a scalar value"),
+            Value::List(_) => IonResult::illegal_operation("List is not a scalar value"),
+            Value::Struct(_) => IonResult::illegal_operation("Struct is not a scalar value"),
         }
     }
 }
@@ -283,10 +283,12 @@ impl<'a> Content<'a> {
         match self {
             Content::Scalar(thunk) => match thunk.memoize() {
                 Ok(ScalarValue::Symbol(symbol)) => Ok(symbol),
-                Ok(other_value) => decoding_error(format!("Not a symbol: {}", other_value)),
+                Ok(other_value) => {
+                    IonResult::decoding_error(format!("Not a symbol: {}", other_value))
+                }
                 Err(e) => Err(e),
             },
-            _ => decoding_error(format!("Not a symbol: {:?}", self)),
+            _ => IonResult::decoding_error(format!("Not a symbol: {:?}", self)),
         }
     }
 
@@ -410,7 +412,7 @@ impl<'a> Token<'a> {
     pub fn has_no_annotations(&mut self) -> IonResult<&mut Self> {
         match self.annotations()?.is_empty() {
             true => Ok(self),
-            false => decoding_error(format!("Expected no annotations on {:?}", self)),
+            false => IonResult::decoding_error(format!("Expected no annotations on {:?}", self)),
         }
     }
 

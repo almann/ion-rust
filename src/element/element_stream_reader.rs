@@ -1,11 +1,11 @@
-use crate::result::{decoding_error, illegal_operation, illegal_operation_raw};
+use crate::result::IonFailure;
 use crate::text::parent_container::ParentContainer;
 
 use crate::element::iterators::SymbolsIterator;
 use crate::element::{Blob, Clob, Element};
-use crate::{
-    Decimal, Int, IonError, IonReader, IonResult, IonType, Str, StreamItem, Symbol, Timestamp,
-};
+use crate::ion_reader::IonReader;
+use crate::reader::StreamItem;
+use crate::{Decimal, Int, IonError, IonResult, IonType, Str, Symbol, Timestamp};
 use std::fmt::Display;
 use std::mem;
 
@@ -99,7 +99,7 @@ impl ElementStreamReader {
     /// perform an action that is only allowed when it is positioned over the item type described
     /// by the parameter `expected`.
     fn expected<I: Display>(&self, expected: I) -> IonError {
-        illegal_operation_raw(format!(
+        IonError::illegal_operation(format!(
             "type mismatch: expected a(n) {} but positioned over a(n) {}",
             expected,
             self.current()
@@ -191,7 +191,7 @@ impl IonReader for ElementStreamReader {
     fn field_name(&self) -> IonResult<Self::Symbol> {
         match self.current_field_name.as_ref() {
             Some(name) => Ok(name.clone()),
-            None => illegal_operation(
+            None => IonResult::illegal_operation(
                 "field_name() can only be called when the reader is positioned inside a struct",
             ),
         }
@@ -216,12 +216,7 @@ impl IonReader for ElementStreamReader {
 
     fn read_i64(&mut self) -> IonResult<i64> {
         match self.current_value.as_ref() {
-            Some(element) if element.as_int().is_some() => match element.as_int().unwrap() {
-                Int::I64(value) => Ok(*value),
-                Int::BigInt(value) => {
-                    decoding_error(format!("Integer {value} is too large to fit in an i64."))
-                }
-            },
+            Some(element) if element.as_int().is_some() => element.as_int().unwrap().expect_i64(),
             _ => Err(self.expected("int value")),
         }
     }
@@ -293,10 +288,11 @@ impl IonReader for ElementStreamReader {
                 self.current_value = None;
                 Ok(())
             }
-            Some(value) => {
-                illegal_operation(format!("Cannot step_in() to a {:?}", value.ion_type()))
-            }
-            None => illegal_operation(format!(
+            Some(value) => IonResult::illegal_operation(format!(
+                "Cannot step_in() to a {:?}",
+                value.ion_type()
+            )),
+            None => IonResult::illegal_operation(format!(
                 "{} {}",
                 "Cannot `step_in`: the reader is not positioned on a value.",
                 "Try calling `next()` to advance first."
@@ -306,7 +302,7 @@ impl IonReader for ElementStreamReader {
 
     fn step_out(&mut self) -> IonResult<()> {
         if self.parents.is_empty() {
-            return illegal_operation(
+            return IonResult::illegal_operation(
                 "Cannot call `step_out()` when the reader is at the top level.",
             );
         }
@@ -359,8 +355,8 @@ mod reader_tests {
     use rstest::*;
 
     use super::*;
+    use crate::ion_reader::IonReader;
     use crate::result::IonResult;
-    use crate::stream_reader::IonReader;
     use crate::types::{Decimal, Timestamp};
 
     use crate::IonType;

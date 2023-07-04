@@ -1,9 +1,9 @@
 use crate::binary::raw_binary_writer::{RawBinaryWriter, RawBinaryWriterBuilder};
 use crate::constants::v1_0::system_symbol_ids;
+use crate::ion_writer::IonWriter;
 use crate::raw_symbol_token_ref::{AsRawSymbolTokenRef, RawSymbolTokenRef};
-use crate::result::{illegal_operation, IonResult};
+use crate::result::{IonFailure, IonResult};
 use crate::types::{Decimal, Int, IonType, SymbolId, Timestamp};
-use crate::writer::IonWriter;
 use crate::SymbolTable;
 use delegate::delegate;
 use std::io::Write;
@@ -140,7 +140,7 @@ impl<W: Write> IonWriter for BinaryWriter<W> {
                 if self.symbol_table.sid_is_valid(symbol_id) {
                     symbol_id
                 } else {
-                    return illegal_operation(format!(
+                    return IonResult::illegal_operation(format!(
                         "Cannot write symbol ID ${symbol_id} as a symbol value. It is undefined."
                     ));
                 }
@@ -201,10 +201,10 @@ impl<W: Write> IonWriter for BinaryWriter<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ion_reader::IonReader;
     use crate::reader::ReaderBuilder;
-    use crate::stream_reader::IonReader;
 
-    use crate::StreamItem::Value;
+    use crate::reader::StreamItem::Value;
 
     #[test]
     fn intern_field_names() -> IonResult<()> {

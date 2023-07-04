@@ -6,7 +6,7 @@
 //! Therefore, `clone()`-ing these types are generally inexpensive.
 
 use crate::macros::ParseStr;
-use crate::result::illegal_operation;
+use crate::result::IonFailure;
 use crate::IonResult;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
@@ -78,7 +78,7 @@ impl ExternalId {
     /// or this returns `Err`.
     pub fn try_new<S: Into<String>>(name: S, version: usize) -> IonResult<Self> {
         if version == 0 {
-            illegal_operation(format!("External version must be >= 1: {}", version))
+            IonResult::illegal_operation(format!("External version must be >= 1: {}", version))
         } else {
             Ok(Self {
                 name: Rc::new(name.into()),
@@ -90,7 +90,7 @@ impl ExternalId {
 
 #[inline]
 fn illegal_address<T>(address: Address) -> IonResult<T> {
-    illegal_operation(format!("Invalid address for macro: {}", address))
+    IonResult::illegal_operation(format!("Invalid address for macro: {}", address))
 }
 
 // FIXME no need to check address here.
