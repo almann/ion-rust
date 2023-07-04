@@ -407,7 +407,7 @@ impl<'a> Token<'a> {
 
     /// Returns a mutable reference to itself if there are no annotations
     ///
-    /// Returns [`IonError::DecodingError`] if there are annotations.
+    /// Returns [`IonError::Decoding`] if there are annotations.
     #[inline]
     pub fn has_no_annotations(&mut self) -> IonResult<&mut Self> {
         match self.annotations()?.is_empty() {
